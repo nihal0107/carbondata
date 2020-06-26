@@ -17,7 +17,9 @@
 
 package org.apache.carbondata.sdk.file;
 
+import java.io.FileReader;
 import java.io.IOException;
+import java.util.List;
 import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
@@ -36,6 +38,10 @@ import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.hadoop.mapreduce.TaskID;
 import org.apache.hadoop.mapreduce.TaskType;
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl;
+import org.json.JSONObject;
+import org.json.simple.JSONArray;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 
 /**
  * Writer Implementation to write Json Record to carbondata file.
@@ -46,6 +52,9 @@ public class JsonCarbonWriter extends CarbonWriter {
   private RecordWriter<NullWritable, ObjectArrayWritable> recordWriter;
   private TaskAttemptContext context;
   private ObjectArrayWritable writable;
+  private String filePath = "";
+  private boolean isDirectory = false;
+  private List<String> fileList;
 
   JsonCarbonWriter(CarbonLoadModel loadModel, Configuration configuration) throws IOException {
     CarbonTableOutputFormat.setLoadModel(configuration, loadModel);
@@ -89,6 +98,39 @@ public class JsonCarbonWriter extends CarbonWriter {
       recordWriter.close(context);
     } catch (InterruptedException e) {
       throw new IOException(e);
+    }
+  }
+
+  public void setFilePath(String filePath) {
+    this.filePath = filePath;
+  }
+
+  public void setIsDirectory(boolean isDirectory) {
+    this.isDirectory = isDirectory;
+    System.out.println(this.fileList);
+    System.out.println(this.filePath);
+  }
+
+  public void setFileList(List<String> fileList) {
+    this.fileList = fileList;
+    System.out.println(this.isDirectory);
+  }
+
+  public void write() throws IOException {
+    try {
+      FileReader reader = new FileReader(this.filePath);
+      JSONParser jsonParser = new JSONParser();
+      Object obj = jsonParser.parse(reader);
+      if(obj instanceof JSONArray) {
+        JSONArray employeeList = (JSONArray) obj;
+        for (Object emp : employeeList) {
+          System.out.println(emp);
+          this.write(emp.toString());
+        }
+      } else
+        this.write(obj.toString());
+    } catch (Exception e) {
+      e.printStackTrace();
     }
   }
 }

@@ -17,13 +17,32 @@
 
 package org.apache.carbondata.sdk.file.utils;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.carbondata.core.datastore.filesystem.CarbonFile;
 import org.apache.carbondata.core.datastore.impl.FileFactory;
+import org.apache.carbondata.processing.loading.csvinput.CSVInputFormat;
 
+import com.univocity.parsers.csv.CsvParser;
+import com.univocity.parsers.csv.CsvParserSettings;
+import org.apache.avro.file.DataFileStream;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericDatumReader;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.ql.io.orc.OrcFile;
+import org.apache.hadoop.hive.ql.io.orc.Reader;
+import org.apache.orc.FileFormatException;
+import org.apache.parquet.avro.AvroReadSupport;
+import org.apache.parquet.hadoop.ParquetReader;
 
 public class SDKUtil {
   public static ArrayList listFiles(String sourceFolder, final String suf) {
@@ -77,6 +96,77 @@ public class SDKUtil {
 
   public static Object[] readObjects(Object[] input, int i) {
     return (Object[]) input[i];
+  }
+
+  public static List<CarbonFile> extractFilesFromFolder(String path,
+      String suf, Configuration hadoopConf) {
+    List dataFiles = listFiles(path, suf, hadoopConf);
+    List<CarbonFile> carbonFiles = new ArrayList<>();
+    for (Object dataFile: dataFiles) {
+      carbonFiles.add(FileFactory.getCarbonFile(dataFile.toString(), hadoopConf));
+    }
+    if (CollectionUtils.isEmpty(dataFiles)) {
+      throw new RuntimeException("No file found at given location. Please provide" +
+          "the correct folder location.");
+    }
+    return carbonFiles;
+  }
+
+  public static DataFileStream<GenericData.Record> buildAvroReader(CarbonFile carbonFile,
+       Configuration configuration) throws IOException {
+    try {
+      GenericDatumReader<GenericData.Record> genericDatumReader =
+          new GenericDatumReader<>();
+      DataFileStream<GenericData.Record> avroReader =
+          new DataFileStream<>(FileFactory.getDataInputStream(carbonFile.getPath(),
+          -1, configuration), genericDatumReader);
+      return avroReader;
+    } catch (FileNotFoundException ex) {
+      throw new FileNotFoundException("File " + carbonFile.getPath()
+          + " not found to build carbon writer.");
+    } catch (IOException ex) {
+      if (ex.getMessage().contains("Not a data file")) {
+        throw new RuntimeException("File " + carbonFile.getPath() + " is not in avro format.");
+      } else {
+        throw ex;
+      }
+    }
+  }
+
+  public static Reader buildOrcReader(String path, Configuration conf) throws IOException {
+    try {
+      Reader orcReader = OrcFile.createReader(new Path(path),
+          OrcFile.readerOptions(conf));
+      return orcReader;
+    } catch (FileFormatException ex) {
+      throw new RuntimeException("File " + path + " is not in ORC format");
+    } catch (FileNotFoundException ex) {
+      throw new FileNotFoundException("File " + path + " not found to build carbon writer.");
+    }
+  }
+
+  public static ParquetReader<GenericRecord> buildParquetReader(String path, Configuration conf)
+      throws IOException {
+    try {
+      AvroReadSupport<GenericRecord> avroReadSupport = new AvroReadSupport<>();
+      ParquetReader<GenericRecord> parquetReader = ParquetReader.builder(avroReadSupport,
+          new Path(path)).withConf(conf).build();
+      return parquetReader;
+    } catch (FileNotFoundException ex) {
+      throw new FileNotFoundException("File " + path + " not found to build carbon writer.");
+    }
+  }
+
+  public static CsvParser buildCsvParser(Configuration conf) {
+    CsvParserSettings settings = CSVInputFormat.extractCsvParserSettings(conf);
+    return new CsvParser(settings);
+  }
+
+  public static java.io.Reader buildJsonReader(CarbonFile file, Configuration conf)
+      throws IOException {
+    InputStream inputStream = FileFactory.getDataInputStream(file.getPath(), -1, conf);
+    java.io.Reader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8);
+    return reader;
   }
 
 }

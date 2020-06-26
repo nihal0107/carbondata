@@ -18,14 +18,17 @@
 package org.apache.carbondata.sdk.file;
 
 import java.io.IOException;
-import java.util.Objects;
-import java.util.Random;
-import java.util.UUID;
+import java.io.Reader;
+import java.util.*;
 
 import org.apache.carbondata.common.annotations.InterfaceAudience;
+import org.apache.carbondata.common.logging.LogServiceFactory;
+import org.apache.carbondata.core.datastore.filesystem.CarbonFile;
 import org.apache.carbondata.hadoop.api.CarbonTableOutputFormat;
 import org.apache.carbondata.hadoop.internal.ObjectArrayWritable;
 import org.apache.carbondata.processing.loading.model.CarbonLoadModel;
+import org.apache.carbondata.processing.loading.sort.unsafe.holder.UnsafeInmemoryMergeHolder;
+import org.apache.carbondata.sdk.file.utils.SDKUtil;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.NullWritable;
@@ -36,6 +39,9 @@ import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.hadoop.mapreduce.TaskID;
 import org.apache.hadoop.mapreduce.TaskType;
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl;
+import org.apache.log4j.Logger;
+import org.json.simple.JSONArray;
+import org.json.simple.parser.JSONParser;
 
 /**
  * Writer Implementation to write Json Record to carbondata file.
@@ -43,9 +49,13 @@ import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl;
  */
 @InterfaceAudience.User
 public class JsonCarbonWriter extends CarbonWriter {
+  private Configuration configuration;
   private RecordWriter<NullWritable, ObjectArrayWritable> recordWriter;
   private TaskAttemptContext context;
   private ObjectArrayWritable writable;
+  private CarbonFile[] dataFiles;
+  private static final Logger LOGGER =
+      LogServiceFactory.getLogService(UnsafeInmemoryMergeHolder.class.getName());
 
   JsonCarbonWriter(CarbonLoadModel loadModel, Configuration configuration) throws IOException {
     CarbonTableOutputFormat.setLoadModel(configuration, loadModel);
@@ -58,6 +68,11 @@ public class JsonCarbonWriter extends CarbonWriter {
     this.recordWriter = outputFormat.getRecordWriter(context);
     this.context = context;
     this.writable = new ObjectArrayWritable();
+    this.configuration = configuration;
+  }
+
+  public void setDataFiles(CarbonFile[] dataFiles) {
+    this.dataFiles = dataFiles;
   }
 
   /**
@@ -89,6 +104,46 @@ public class JsonCarbonWriter extends CarbonWriter {
       recordWriter.close(context);
     } catch (InterruptedException e) {
       throw new IOException(e);
+    }
+  }
+
+  private void loadSingleFile(CarbonFile file) throws IOException {
+    Reader reader = null;
+    try {
+      reader = SDKUtil.buildJsonReader(file, configuration);
+      JSONParser jsonParser = new JSONParser();
+      Object jsonRecord = jsonParser.parse(reader);
+      if (jsonRecord instanceof JSONArray) {
+        JSONArray jsonArray = (JSONArray) jsonRecord;
+        for (Object record : jsonArray) {
+          this.write(record.toString());
+        }
+      } else {
+        this.write(jsonRecord.toString());
+      }
+    } catch (Exception e) {
+      LOGGER.error(e);
+      throw new IOException(e.getMessage());
+    } finally {
+      if (reader != null) {
+        reader.close();
+      }
+    }
+  }
+
+  /**
+   * Load data of all or selected json files at given location iteratively.
+   *
+   * @throws IOException
+   */
+  @Override
+  public void write() throws IOException {
+    if (this.dataFiles == null || this.dataFiles.length == 0) {
+      throw new RuntimeException("'withJsonPath()' must be called to support load json files");
+    }
+    Arrays.sort(this.dataFiles, Comparator.comparing(CarbonFile::getPath));
+    for (CarbonFile dataFile : this.dataFiles) {
+      this.loadSingleFile(dataFile);
     }
   }
 }

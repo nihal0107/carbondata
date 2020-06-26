@@ -17,17 +17,9 @@
 
 package org.apache.carbondata.sdk.file;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -35,7 +27,9 @@ import org.apache.carbondata.common.annotations.InterfaceAudience;
 import org.apache.carbondata.common.annotations.InterfaceStability;
 import org.apache.carbondata.common.constants.LoggerAction;
 import org.apache.carbondata.common.exceptions.sql.InvalidLoadOptionException;
+import org.apache.carbondata.common.logging.LogServiceFactory;
 import org.apache.carbondata.core.constants.CarbonCommonConstants;
+import org.apache.carbondata.core.datastore.filesystem.CarbonFile;
 import org.apache.carbondata.core.datastore.impl.FileFactory;
 import org.apache.carbondata.core.metadata.datatype.DataType;
 import org.apache.carbondata.core.metadata.datatype.DataTypes;
@@ -53,8 +47,21 @@ import org.apache.carbondata.core.util.CarbonUtil;
 import org.apache.carbondata.processing.loading.model.CarbonLoadModel;
 import org.apache.carbondata.processing.loading.model.CarbonLoadModelBuilder;
 import org.apache.carbondata.processing.util.CarbonLoaderUtil;
+import org.apache.carbondata.sdk.file.utils.SDKUtil;
 
+import com.univocity.parsers.csv.CsvParser;
+import org.apache.avro.file.DataFileStream;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hive.ql.io.orc.Reader;
+import org.apache.log4j.Logger;
+import org.apache.orc.TypeDescription;
+import org.apache.parquet.hadoop.ParquetReader;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 
 /**
  * Builder for {@link CarbonWriter}
@@ -63,7 +70,7 @@ import org.apache.hadoop.conf.Configuration;
 @InterfaceStability.Unstable
 public class CarbonWriterBuilder {
   private Schema schema;
-  private org.apache.avro.Schema  avroSchema;
+  private org.apache.avro.Schema avroSchema;
   private String path;
   //initialize with empty array , as no columns should be selected for sorting in NO_SORT
   private String[] sortColumns = new String[0];
@@ -78,13 +85,20 @@ public class CarbonWriterBuilder {
   private String taskNo;
   private int localDictionaryThreshold;
   private boolean isLocalDictionaryEnabled = Boolean.parseBoolean(
-          CarbonCommonConstants.LOCAL_DICTIONARY_ENABLE_DEFAULT);
+      CarbonCommonConstants.LOCAL_DICTIONARY_ENABLE_DEFAULT);
   private short numOfThreads;
   private Configuration hadoopConf;
   private String writtenByApp;
   private String[] invertedIndexColumns;
+  private String filePath;
+  private boolean isDirectory = false;
+  private List<String> fileList;
+  private static final Logger LOGGER =
+      LogServiceFactory.getLogService(CarbonWriterBuilder.class.getName());
+  private CarbonFile[] dataFiles;
+
   private enum WRITER_TYPE {
-    CSV, AVRO, JSON
+    CSV, AVRO, JSON, PARQUET, ORC
   }
 
   private WRITER_TYPE writerType;
@@ -497,7 +511,6 @@ public class CarbonWriterBuilder {
    * To set the blocklet size of CarbonData file
    *
    * @param pageSizeInMb is page size in MB
-   *
    * @return updated CarbonWriterBuilder
    */
   public CarbonWriterBuilder withPageSizeInMb(int pageSizeInMb) {
@@ -594,6 +607,446 @@ public class CarbonWriterBuilder {
     return this;
   }
 
+  private void validateCsvFiles() throws IOException {
+    CarbonFile[] dataFiles = this.extractDataFiles(CarbonCommonConstants.CSV_FILE_EXTENSION);
+    if (CollectionUtils.isEmpty(Arrays.asList(dataFiles))) {
+      throw new RuntimeException("CSV files can't be empty.");
+    }
+    for (CarbonFile dataFile : dataFiles) {
+      try {
+        CsvParser csvParser = SDKUtil.buildCsvParser(this.hadoopConf);
+        csvParser.beginParsing(FileFactory.getDataInputStream(dataFile.getPath(),
+            -1, this.hadoopConf));
+      } catch (IllegalArgumentException ex) {
+        if (ex.getCause() instanceof FileNotFoundException) {
+          throw new FileNotFoundException("File " + dataFile +
+              " not found to build carbon writer.");
+        }
+        throw ex;
+      }
+    }
+    this.dataFiles = dataFiles;
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts loading CSV files.
+   *
+   * @param filePath absolute path under which files should be loaded.
+   * @return CarbonWriterBuilder
+   */
+  public CarbonWriterBuilder withCsvPath(String filePath) throws IOException {
+    this.validateFilePath(filePath);
+    this.filePath = filePath;
+    this.setIsDirectory(filePath);
+    this.withCsvInput();
+    this.validateCsvFiles();
+    return this;
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts CSV files directory and
+   * list of file which has to be loaded.
+   *
+   * @param filePath directory where the CSV file exists.
+   * @param fileList list of files which has to be loaded.
+   * @return CarbonWriterBuilder
+   */
+  public CarbonWriterBuilder withCsvPath(String filePath, List<String> fileList)
+      throws IOException {
+    this.fileList = fileList;
+    this.withCsvPath(filePath);
+    return this;
+  }
+
+  private void validateJsonFiles() throws IOException {
+    CarbonFile[] dataFiles = this.extractDataFiles(CarbonCommonConstants.JSON_FILE_EXTENSION);
+    for (CarbonFile dataFile : dataFiles) {
+      try {
+        new JSONParser().parse(SDKUtil.buildJsonReader(dataFile, this.hadoopConf));
+      } catch (FileNotFoundException ex) {
+        throw new FileNotFoundException("File " + dataFile + " not found to build carbon writer.");
+      } catch (ParseException ex) {
+        throw new RuntimeException("File " + dataFile + " is not in json format.");
+      }
+    }
+    this.dataFiles = dataFiles;
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts loading JSON files.
+   *
+   * @param filePath absolute path under which files should be loaded.
+   * @return CarbonWriterBuilder
+   */
+  public CarbonWriterBuilder withJsonPath(String filePath) throws IOException {
+    this.validateFilePath(filePath);
+    this.filePath = filePath;
+    this.setIsDirectory(filePath);
+    this.withJsonInput();
+    this.validateJsonFiles();
+    return this;
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts JSON file directory and
+   * list of file which has to be loaded.
+   *
+   * @param filePath directory where the json file exists.
+   * @param fileList list of files which has to be loaded.
+   * @return CarbonWriterBuilder
+   * @throws IOException
+   */
+  public CarbonWriterBuilder withJsonPath(String filePath, List<String> fileList)
+      throws IOException {
+    this.fileList = fileList;
+    this.withJsonPath(filePath);
+    return this;
+  }
+
+  private void validateFilePath(String filePath) {
+    if (StringUtils.isEmpty(filePath)) {
+      throw new IllegalArgumentException("filePath can not be empty");
+    }
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts loading Parquet files.
+   *
+   * @param filePath absolute path under which files should be loaded.
+   * @return CarbonWriterBuilder
+   */
+  public CarbonWriterBuilder withParquetPath(String filePath) throws IOException {
+    this.validateFilePath(filePath);
+    this.filePath = filePath;
+    this.setIsDirectory(filePath);
+    this.writerType = WRITER_TYPE.PARQUET;
+    this.validateParquetFiles();
+    return this;
+  }
+
+  private void setIsDirectory(String filePath) {
+    if (this.hadoopConf == null) {
+      this.hadoopConf = new Configuration(FileFactory.getConfiguration());
+    }
+    CarbonFile carbonFile = FileFactory.getCarbonFile(filePath, hadoopConf);
+    this.isDirectory = carbonFile.isDirectory();
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts parquet files directory and
+   * list of file which has to be loaded.
+   *
+   * @param filePath directory where the parquet file exists.
+   * @param fileList list of files which has to be loaded.
+   * @return CarbonWriterBuilder
+   * @throws IOException
+   */
+  public CarbonWriterBuilder withParquetPath(String filePath, List<String> fileList)
+      throws IOException {
+    this.fileList = fileList;
+    this.withParquetPath(filePath);
+    return this;
+  }
+
+  private void validateParquetFiles() throws IOException {
+    CarbonFile[] dataFiles = this.extractDataFiles(CarbonCommonConstants.PARQUET_FILE_EXT);
+    org.apache.avro.Schema parquetSchema = null;
+    for (CarbonFile dataFile : dataFiles) {
+      try {
+        ParquetReader<GenericRecord> parquetReader =
+            SDKUtil.buildParquetReader(dataFile.getPath(), this.hadoopConf);
+        if (parquetSchema == null) {
+          parquetSchema = parquetReader.read().getSchema();
+        } else {
+          if (!parquetSchema.equals(parquetReader.read().getSchema())) {
+            throw new RuntimeException("All the parquet files must be having the same schema.");
+          }
+        }
+      } catch (IllegalArgumentException ex) {
+        if (ex.getMessage() != null && ex.getMessage()
+            .contains("INT96 not implemented and is deprecated")) {
+          throw new IllegalArgumentException("Carbon does not support parquet INT96 data type.");
+        }
+        throw ex;
+      } catch (UnsupportedOperationException ex) {
+        if (ex.getMessage() != null && ex.getMessage()
+            .contains("REPEATED not supported outside LIST or MAP.")) {
+          throw new UnsupportedOperationException("Carbon does not support " +
+              "repeated parquet schema outside of list or map.");
+        }
+        throw ex;
+      } catch (RuntimeException ex) {
+        if (ex.getMessage() != null && ex.getMessage().contains("not a Parquet file")) {
+          throw new RuntimeException("File " + dataFile + " is not in parquet format.");
+        }
+        throw ex;
+      }
+    }
+    this.dataFiles = dataFiles;
+    this.avroSchema = parquetSchema;
+    this.schema = AvroCarbonWriter.getCarbonSchemaFromAvroSchema(this.avroSchema);
+  }
+
+  private CarbonFile[] extractDataFiles(String suf) {
+    List<CarbonFile> dataFiles;
+    if (this.hadoopConf == null) {
+      this.hadoopConf = new Configuration(FileFactory.getConfiguration());
+    }
+    if (this.isDirectory) {
+      if (CollectionUtils.isEmpty(this.fileList)) {
+        dataFiles = SDKUtil.extractFilesFromFolder(this.filePath, suf, this.hadoopConf);
+      } else {
+        dataFiles = this.appendFileListWithPath();
+      }
+    } else {
+      dataFiles = new ArrayList<>();
+      dataFiles.add(FileFactory.getCarbonFile(this.filePath, this.hadoopConf));
+    }
+    return dataFiles.toArray(new CarbonFile[0]);
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts loading ORC files.
+   *
+   * @param filePath absolute path under which files should be loaded.
+   * @return CarbonWriterBuilder
+   */
+  public CarbonWriterBuilder withOrcPath(String filePath) throws IOException {
+    this.validateFilePath(filePath);
+    this.filePath = filePath;
+    this.setIsDirectory(filePath);
+    this.writerType = WRITER_TYPE.ORC;
+    Map<String, String> options = new HashMap<>();
+    options.put("complex_delimiter_level_1",
+        CarbonCommonConstants.COMPLEX_DELIMITERS_LEVEL_1_DEFAULT);
+    options.put("complex_delimiter_level_2",
+        CarbonCommonConstants.COMPLEX_DELIMITERS_LEVEL_2_DEFAULT);
+    options.put("complex_delimiter_level_3",
+        CarbonCommonConstants.COMPLEX_DELIMITERS_LEVEL_3_DEFAULT);
+    this.withLoadOptions(options);
+    this.buildOrcReader();
+    return this;
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts orc files directory and
+   * list of file which has to be loaded.
+   *
+   * @param filePath directory where the orc file exists.
+   * @param fileList list of files which has to be loaded.
+   * @return CarbonWriterBuilder
+   * @throws IOException
+   */
+  public CarbonWriterBuilder withOrcPath(String filePath, List<String> fileList)
+      throws IOException {
+    this.fileList = fileList;
+    this.withOrcPath(filePath);
+    return this;
+  }
+
+  private void compareAllOrcFilesSchema(CarbonFile[] dataFiles) throws IOException {
+    TypeDescription orcSchema = null;
+    for (CarbonFile dataFile : dataFiles) {
+      Reader orcReader = SDKUtil.buildOrcReader(dataFile.getPath(), this.hadoopConf);
+      if (orcSchema == null) {
+        orcSchema = orcReader.getSchema();
+      } else {
+        if (!orcSchema.toString().equals(orcReader.getSchema().toString())) {
+          throw new RuntimeException("All the ORC files must be having the same schema.");
+        }
+      }
+    }
+    this.dataFiles = dataFiles;
+  }
+
+  private List<CarbonFile> appendFileListWithPath() {
+    List<CarbonFile> dataFiles = new ArrayList<>();
+    for (String file : this.fileList) {
+      dataFiles.add(FileFactory.getCarbonFile(this.filePath +
+          CarbonCommonConstants.FILE_SEPARATOR + file, this.hadoopConf));
+    }
+    return dataFiles;
+  }
+
+  // build orc reader and convert orc schema to carbon schema.
+  private void buildOrcReader() throws IOException {
+    Reader orcReader;
+    CarbonFile[] dataFiles = this.extractDataFiles(CarbonCommonConstants.ORC_FILE_EXTENSION);
+    this.compareAllOrcFilesSchema(dataFiles);
+    orcReader = SDKUtil.buildOrcReader(dataFiles[0].getPath(), this.hadoopConf);
+    TypeDescription typeDescription = orcReader.getSchema();
+    List<String> fieldList;
+    try {
+      fieldList = typeDescription.getFieldNames();
+    } catch (NullPointerException e) {
+      throw new RuntimeException("Schema of ORC file can not be null.");
+    }
+    Field field = orcToCarbonSchemaConverter(typeDescription,
+        fieldList, typeDescription.getCategory().getName());
+    String fieldType = field.getDataType().toString();
+    if (fieldType.equalsIgnoreCase(CarbonCommonConstants.STRUCT)) {
+      int size = field.getChildren().size();
+      Field[] fields = new Field[size];
+      for (int i = 0; i < size; i++) {
+        StructField columnDetails = field.getChildren().get(i);
+        fields[i] = new Field(columnDetails.getFieldName(),
+            columnDetails.getDataType(), columnDetails.getChildren());
+      }
+      this.schema = new Schema(fields);
+    } else {
+      Field[] fields = new Field[1];
+      fields[0] = field;
+      this.schema = new Schema(fields);
+    }
+  }
+
+  // TO convert ORC schema to carbon schema
+  private Field orcToCarbonSchemaConverter(TypeDescription typeDescription,
+      List<String> fieldsName, String colName) {
+    Objects.requireNonNull(typeDescription, "orc typeDescription should not be null");
+    Objects.requireNonNull(typeDescription.getCategory(),
+        "typeDescription category should not be null");
+    if (colName == null) {
+      colName = typeDescription.getCategory().getName();
+    }
+    switch (typeDescription.getCategory()) {
+      case BOOLEAN:
+        return new Field(colName, "boolean");
+      case BYTE:
+      case BINARY:
+        return new Field(colName, "binary");
+      case SHORT:
+        return new Field(colName, "short");
+      case INT:
+        return new Field(colName, "int");
+      case LONG:
+        return new Field(colName, "long");
+      case FLOAT:
+        return new Field(colName, "float");
+      case DOUBLE:
+        return new Field(colName, "double");
+      case DECIMAL:
+        return new Field(colName, "decimal");
+      case STRING:
+        return new Field(colName, "string");
+      case CHAR:
+      case VARCHAR:
+        return new Field(colName, "varchar");
+      case DATE:
+        return new Field(colName, "date");
+      case TIMESTAMP:
+        return new Field(colName, "timestamp");
+      case STRUCT:
+        List<TypeDescription> childSchemas = typeDescription.getChildren();
+        Field[] childs = new Field[childSchemas.size()];
+        childSchema(childs, childSchemas, fieldsName);
+        List<StructField> structList = new ArrayList<>();
+        for (int i = 0; i < childSchemas.size(); i++) {
+          structList.add(new StructField(childs[i].getFieldName(),
+              childs[i].getDataType(), childs[i].getChildren()));
+        }
+        return new Field(colName, "struct", structList);
+      case LIST:
+        childSchemas = typeDescription.getChildren();
+        childs = new Field[childSchemas.size()];
+        childSchema(childs, childSchemas, fieldsName);
+        List<StructField> arrayField = new ArrayList<>();
+        for (int i = 0; i < childSchemas.size(); i++) {
+          arrayField.add(new StructField(childs[i].getFieldName(),
+              childs[i].getDataType(), childs[i].getChildren()));
+        }
+        return new Field(colName, "array", arrayField);
+      case MAP:
+        childSchemas = typeDescription.getChildren();
+        childs = new Field[childSchemas.size()];
+        childSchema(childs, childSchemas, fieldsName);
+        ArrayList<StructField> keyValueFields = new ArrayList<>();
+        StructField keyField = new StructField(typeDescription.getCategory().getName() + ".key",
+            childs[0].getDataType());
+        StructField valueField = new StructField(typeDescription.getCategory().getName() + ".value",
+            childs[1].getDataType(), childs[1].getChildren());
+        keyValueFields.add(keyField);
+        keyValueFields.add(valueField);
+        StructField mapKeyValueField =
+            new StructField(typeDescription.getCategory().getName() + ".val",
+                DataTypes.createStructType(keyValueFields), keyValueFields);
+        MapType mapType =
+            DataTypes.createMapType(DataTypes.STRING, mapKeyValueField.getDataType());
+        List<StructField> mapStructFields = new ArrayList<>();
+        mapStructFields.add(mapKeyValueField);
+        return new Field(colName, mapType, mapStructFields);
+      default:
+        throw new UnsupportedOperationException(
+            "carbon not support " + typeDescription.getCategory().getName() + " orc type yet");
+    }
+  }
+
+  // extract child schema from the ORC type description.
+  private Field[] childSchema(Field[] childs,
+      List<TypeDescription> childSchemas, List<String> fieldsName) {
+    for (int i = 0; i < childSchemas.size(); i++) {
+      List<String> fieldList = null;
+      try {
+        fieldList = childSchemas.get(i).getFieldNames();
+      } catch (NullPointerException e) {
+        LOGGER.info("quad tree disJoint with query polygon envelope return");
+      }
+      childs[i] = orcToCarbonSchemaConverter(childSchemas.get(i), fieldList,
+          fieldsName == null ? null : fieldsName.get(i));
+    }
+    return childs;
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts loading AVRO files.
+   *
+   * @param filePath absolute path under which files should be loaded.
+   * @return CarbonWriterBuilder
+   */
+  public CarbonWriterBuilder withAvroPath(String filePath) throws IOException {
+    this.validateFilePath(filePath);
+    this.filePath = filePath;
+    this.setIsDirectory(filePath);
+    this.writerType = WRITER_TYPE.AVRO;
+    this.validateAvroFiles();
+    return this;
+  }
+
+  /**
+   * to build a {@link CarbonWriter}, which accepts avro file directory and
+   * list of file which has to be loaded.
+   *
+   * @param filePath directory where the avro file exists.
+   * @param fileList list of files which has to be loaded.
+   * @return CarbonWriterBuilder
+   * @throws IOException
+   */
+  public CarbonWriterBuilder withAvroPath(String filePath, List<String> fileList)
+      throws IOException {
+    this.fileList = fileList;
+    this.withAvroPath(filePath);
+    return this;
+  }
+
+  private void validateAvroFiles() throws IOException {
+    CarbonFile[] dataFiles = this.extractDataFiles(CarbonCommonConstants.AVRO_FILE_EXTENSION);
+    org.apache.avro.Schema avroSchema = null;
+    for (CarbonFile dataFile : dataFiles) {
+      DataFileStream<GenericData.Record> avroReader =
+          SDKUtil.buildAvroReader(dataFile, this.hadoopConf);
+      if (avroSchema == null) {
+        avroSchema = avroReader.getSchema();
+      } else {
+        if (!avroSchema.equals(avroReader.getSchema())) {
+          throw new RuntimeException("All the Avro files must be having the same schema.");
+        }
+      }
+    }
+    this.dataFiles = dataFiles;
+    this.avroSchema = avroSchema;
+    this.schema = AvroCarbonWriter.getCarbonSchemaFromAvroSchema(this.avroSchema);
+  }
+
   /**
    * to build a {@link CarbonWriter}, which accepts row in Json format
    *
@@ -660,13 +1113,42 @@ public class CarbonWriterBuilder {
       // removed from the load. LoadWithoutConverter flag is going to point to the Loader Builder
       // which will skip Conversion Step.
       loadModel.setLoadWithoutConverterStep(true);
-      return new AvroCarbonWriter(loadModel, hadoopConf, this.avroSchema);
+      AvroCarbonWriter avroCarbonWriter = new AvroCarbonWriter(loadModel,
+          hadoopConf, this.avroSchema);
+      if (!StringUtils.isEmpty(filePath)) {
+        avroCarbonWriter.setDataFiles(this.dataFiles);
+      }
+      return avroCarbonWriter;
     } else if (this.writerType == WRITER_TYPE.JSON) {
       loadModel.setJsonFileLoad(true);
-      return new JsonCarbonWriter(loadModel, hadoopConf);
+      JsonCarbonWriter jsonCarbonWriter = new JsonCarbonWriter(loadModel, hadoopConf);
+      if (!StringUtils.isEmpty(filePath)) {
+        jsonCarbonWriter.setDataFiles(this.dataFiles);
+      }
+      return jsonCarbonWriter;
+    } else if (this.writerType == WRITER_TYPE.PARQUET) {
+      loadModel.setLoadWithoutConverterStep(true);
+      AvroCarbonWriter avroCarbonWriter = new AvroCarbonWriter(loadModel,
+          hadoopConf, this.avroSchema);
+      ParquetCarbonWriter parquetCarbonWriter = new
+          ParquetCarbonWriter(avroCarbonWriter, hadoopConf);
+      parquetCarbonWriter.setDataFiles(this.dataFiles);
+      return parquetCarbonWriter;
+    } else if (this.writerType == WRITER_TYPE.ORC) {
+      CSVCarbonWriter csvCarbonWriter = new CSVCarbonWriter(loadModel, hadoopConf);
+      ORCCarbonWriter orcCarbonWriter = new ORCCarbonWriter(csvCarbonWriter, hadoopConf);
+      orcCarbonWriter.setDataFiles(this.dataFiles);
+      return orcCarbonWriter;
     } else {
       // CSV
-      return new CSVCarbonWriter(loadModel, hadoopConf);
+      CSVCarbonWriter csvCarbonWriter = new CSVCarbonWriter(loadModel, hadoopConf);
+      if (!StringUtils.isEmpty(filePath)) {
+        csvCarbonWriter.setDataFiles(this.dataFiles);
+        if (!this.options.containsKey(CarbonCommonConstants.FILE_HEADER)) {
+          csvCarbonWriter.setSkipHeader(true);
+        }
+      }
+      return csvCarbonWriter;
     }
   }
 

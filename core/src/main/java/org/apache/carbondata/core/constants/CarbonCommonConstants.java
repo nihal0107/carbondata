@@ -1766,6 +1766,21 @@ public final class CarbonCommonConstants {
   public static final String CSV_FILE_EXTENSION = ".csv";
 
   /**
+   * AVRO_FILE_EXTENSION
+   */
+  public static final String AVRO_FILE_EXTENSION = ".avro";
+
+  /**
+   * JSON_FILE_EXTENSION
+   */
+  public static final String JSON_FILE_EXTENSION = ".json";
+
+  /**
+   * ORC_FILE_EXTENSION
+   */
+  public static final String ORC_FILE_EXTENSION = ".orc";
+
+  /**
    * LOG_FILE_EXTENSION
    */
   public static final String LOG_FILE_EXTENSION = ".log";
@@ -2472,4 +2487,21 @@ public final class CarbonCommonConstants {
   public static final String STRING_LENGTH_EXCEEDED_MESSAGE =
       "Record %s of column %s exceeded " + MAX_CHARS_PER_COLUMN_DEFAULT +
           " characters. Please consider long string data type.";
+
+  /**
+   * the level 1 complex delimiter default value
+   */
+  public static final String COMPLEX_DELIMITERS_LEVEL_1_DEFAULT = "#";
+
+  /**
+   * the level 2 complex delimiter default value
+   */
+  public static final String COMPLEX_DELIMITERS_LEVEL_2_DEFAULT = "$";
+
+  /**
+   * the level 3 complex delimiter default value
+   */
+  public static final String COMPLEX_DELIMITERS_LEVEL_3_DEFAULT = "@";
+
+  public static final String FILE_HEADER = "fileHeader";
 }

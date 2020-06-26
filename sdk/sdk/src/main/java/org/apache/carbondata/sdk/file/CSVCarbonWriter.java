@@ -18,14 +18,20 @@
 package org.apache.carbondata.sdk.file;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Random;
 import java.util.UUID;
 
 import org.apache.carbondata.common.annotations.InterfaceAudience;
+import org.apache.carbondata.core.datastore.filesystem.CarbonFile;
+import org.apache.carbondata.core.datastore.impl.FileFactory;
 import org.apache.carbondata.hadoop.api.CarbonTableOutputFormat;
 import org.apache.carbondata.hadoop.internal.ObjectArrayWritable;
 import org.apache.carbondata.processing.loading.model.CarbonLoadModel;
+import org.apache.carbondata.sdk.file.utils.SDKUtil;
 
+import com.univocity.parsers.csv.CsvParser;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.mapreduce.JobID;
@@ -42,9 +48,13 @@ import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl;
 @InterfaceAudience.Internal
 class CSVCarbonWriter extends CarbonWriter {
 
+  private Configuration configuration;
   private RecordWriter<NullWritable, ObjectArrayWritable> recordWriter;
   private TaskAttemptContext context;
   private ObjectArrayWritable writable;
+  public CsvParser csvParser = null;
+  private boolean skipHeader = false;
+  private CarbonFile[] dataFiles;
 
   CSVCarbonWriter(CarbonLoadModel loadModel, Configuration hadoopConf) throws IOException {
     CarbonTableOutputFormat.setLoadModel(hadoopConf, loadModel);
@@ -57,6 +67,17 @@ class CSVCarbonWriter extends CarbonWriter {
     this.recordWriter = format.getRecordWriter(context);
     this.context = context;
     this.writable = new ObjectArrayWritable();
+    this.configuration = hadoopConf;
+  }
+
+  CSVCarbonWriter() { }
+
+  public void setSkipHeader(boolean skipHeader) {
+    this.skipHeader = skipHeader;
+  }
+
+  public void setDataFiles(CarbonFile[] dataFiles) {
+    this.dataFiles = dataFiles;
   }
 
   /**
@@ -69,6 +90,36 @@ class CSVCarbonWriter extends CarbonWriter {
       recordWriter.write(NullWritable.get(), writable);
     } catch (Exception e) {
       throw new IOException(e);
+    }
+  }
+
+  /**
+   * Load data of all or selected csv files at given location iteratively.
+   *
+   * @throws IOException
+   */
+  @Override
+  public void write() throws IOException {
+    if (this.dataFiles == null || this.dataFiles.length == 0) {
+      throw new RuntimeException("'withCsvPath()' must be called to support load files");
+    }
+    this.csvParser = SDKUtil.buildCsvParser(this.configuration);
+    Arrays.sort(this.dataFiles, Comparator.comparing(CarbonFile::getPath));
+    for (CarbonFile dataFile : this.dataFiles) {
+      this.loadSingleFile(dataFile);
+    }
+  }
+
+  private void loadSingleFile(CarbonFile file) throws IOException {
+    this.csvParser.beginParsing(FileFactory.getDataInputStream(file.getPath(), -1, configuration));
+    String[] row;
+    boolean skipFirstRow = this.skipHeader;
+    while ((row = this.csvParser.parseNext()) != null) {
+      if (skipFirstRow) {
+        skipFirstRow = false;
+        continue;
+      }
+      this.write(row);
     }
   }
 

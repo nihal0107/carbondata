@@ -25,17 +25,12 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.UUID;
+import java.util.*;
 
 import org.apache.carbondata.common.annotations.InterfaceAudience;
 import org.apache.carbondata.common.logging.LogServiceFactory;
 import org.apache.carbondata.core.constants.CarbonCommonConstants;
+import org.apache.carbondata.core.datastore.filesystem.CarbonFile;
 import org.apache.carbondata.core.keygenerator.directdictionary.timestamp.DateDirectDictionaryGenerator;
 import org.apache.carbondata.core.metadata.datatype.DataType;
 import org.apache.carbondata.core.metadata.datatype.DataTypes;
@@ -49,10 +44,12 @@ import org.apache.carbondata.processing.loading.complexobjects.ArrayObject;
 import org.apache.carbondata.processing.loading.complexobjects.StructObject;
 import org.apache.carbondata.processing.loading.exception.CarbonDataLoadingException;
 import org.apache.carbondata.processing.loading.model.CarbonLoadModel;
+import org.apache.carbondata.sdk.file.utils.SDKUtil;
 
 import org.apache.avro.LogicalType;
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
+import org.apache.avro.file.DataFileStream;
 import org.apache.avro.file.DataFileWriter;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericDatumReader;
@@ -76,12 +73,14 @@ import org.apache.log4j.Logger;
  */
 @InterfaceAudience.Internal public class AvroCarbonWriter extends CarbonWriter {
 
+  private Configuration configuration;
   private RecordWriter<NullWritable, ObjectArrayWritable> recordWriter;
   private TaskAttemptContext context;
   private ObjectArrayWritable writable;
   private Schema avroSchema;
   private static final Logger LOGGER =
       LogServiceFactory.getLogService(AvroCarbonWriter.class.getName());
+  private CarbonFile[] dataFiles;
 
   AvroCarbonWriter(CarbonLoadModel loadModel, Configuration hadoopConf) throws IOException {
     CarbonTableOutputFormat.setLoadModel(hadoopConf, loadModel);
@@ -94,12 +93,19 @@ import org.apache.log4j.Logger;
     this.recordWriter = format.getRecordWriter(context);
     this.context = context;
     this.writable = new ObjectArrayWritable();
+    this.configuration = hadoopConf;
   }
 
   AvroCarbonWriter(CarbonLoadModel loadModel, Configuration hadoopConf, Schema avroSchema)
     throws IOException {
     this(loadModel, hadoopConf);
     this.avroSchema = avroSchema;
+  }
+
+  AvroCarbonWriter() { }
+
+  public void setDataFiles(CarbonFile[] dataFiles) {
+    this.dataFiles = dataFiles;
   }
 
   private Object[] avroToCsv(GenericData.Record avroRecord) {
@@ -820,6 +826,31 @@ import org.apache.log4j.Logger;
     } catch (Exception e) {
       close();
       throw new IOException(e);
+    }
+  }
+
+  /**
+   * Load data of all avro files at given location iteratively.
+   *
+   * @throws IOException
+   */
+  @Override
+  public void write() throws IOException {
+    if (this.dataFiles == null || this.dataFiles.length == 0) {
+      throw new RuntimeException("'withAvroPath()' must be called to support loading avro files");
+    }
+    Arrays.sort(this.dataFiles, Comparator.comparing(CarbonFile::getPath));
+    for (CarbonFile dataFile : this.dataFiles) {
+      this.loadSingleFile(dataFile);
+    }
+  }
+
+  private void loadSingleFile(CarbonFile file) throws IOException {
+    DataFileStream<GenericData.Record> avroReader = SDKUtil
+        .buildAvroReader(file, this.configuration);
+    while (avroReader.hasNext()) {
+      GenericData.Record record = avroReader.next();
+      this.write(record);
     }
   }
 

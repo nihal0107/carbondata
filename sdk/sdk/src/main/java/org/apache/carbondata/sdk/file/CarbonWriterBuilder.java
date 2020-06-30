@@ -936,6 +936,27 @@ public class CarbonWriterBuilder {
   }
 
   /**
+   * to build a {@link CarbonWriter}, which accepts loading JSON files.
+   *
+   * @param filePath absolute path under which files should be loaded.
+   * @return CarbonWriterBuilder
+   */
+  public CarbonWriterBuilder withJsonPath(String filePath) throws IOException {
+    if (filePath.length() == 0) {
+      throw new IllegalArgumentException("filePath can not be empty");
+    }
+    this.filePath = filePath;
+    this.isDirectory = new File(filePath).isDirectory();
+    this.writerType = WRITER_TYPE.JSON;
+    this.buildJsonReader();
+    return this;
+  }
+
+  private void buildJsonReader() {
+
+  }
+
+  /**
    * to build a {@link CarbonWriter}, which accepts row in Json format
    *
    * @return CarbonWriterBuilder
@@ -1011,7 +1032,13 @@ public class CarbonWriterBuilder {
       return avroCarbonWriter;
     } else if (this.writerType == WRITER_TYPE.JSON) {
       loadModel.setJsonFileLoad(true);
-      return new JsonCarbonWriter(loadModel, hadoopConf);
+      JsonCarbonWriter jsonCarbonWriter = new JsonCarbonWriter(loadModel, hadoopConf);
+      if (this.filePath != null && this.filePath.length() != 0) {
+        jsonCarbonWriter.setFilePath(this.filePath);
+        jsonCarbonWriter.setIsDirectory(this.isDirectory);
+        jsonCarbonWriter.setFileList(this.fileList);
+      }
+      return jsonCarbonWriter;
     } else if (this.writerType == WRITER_TYPE.PARQUET) {
       loadModel.setLoadWithoutConverterStep(true);
       AvroCarbonWriter avroCarbonWriter = new AvroCarbonWriter(loadModel,

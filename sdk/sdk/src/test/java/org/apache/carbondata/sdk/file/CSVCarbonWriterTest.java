@@ -1006,4 +1006,20 @@ public class CSVCarbonWriterTest {
     assert (id == 30);
     FileUtils.deleteDirectory(new File(path));
   }
+
+  @Test
+  public void testJsonFileLoad() throws IOException, InvalidLoadOptionException {
+    Field[] fields = new Field[2];
+    fields[0] = new Field("name", DataTypes.STRING);
+    fields[1] = new Field("age", DataTypes.INT);
+
+    Schema carbonSchema = new Schema(fields);
+    String path = "/home/nihal/OutPut";
+    String filePath = "./src/test/resources/file/allPrimitiveType.json";
+    FileUtils.deleteDirectory(new File(path));
+    CarbonWriterBuilder carbonWriterBuilder = new CarbonWriterBuilder();
+    CarbonWriter carbonWriter = carbonWriterBuilder.withJsonInput(carbonSchema).outputPath(path).writtenBy("JsonCarbonWriter").withJsonPath(filePath).build();
+    carbonWriter.write();
+    carbonWriter.close();
+  }
 }

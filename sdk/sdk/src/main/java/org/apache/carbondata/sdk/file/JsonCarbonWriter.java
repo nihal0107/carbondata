@@ -17,8 +17,14 @@
 
 package org.apache.carbondata.sdk.file;
 
-import java.io.FileReader;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Random;
@@ -38,10 +44,8 @@ import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.hadoop.mapreduce.TaskID;
 import org.apache.hadoop.mapreduce.TaskType;
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl;
-import org.json.JSONObject;
 import org.json.simple.JSONArray;
 import org.json.simple.parser.JSONParser;
-import org.json.simple.parser.ParseException;
 
 /**
  * Writer Implementation to write Json Record to carbondata file.
@@ -107,30 +111,60 @@ public class JsonCarbonWriter extends CarbonWriter {
 
   public void setIsDirectory(boolean isDirectory) {
     this.isDirectory = isDirectory;
-    System.out.println(this.fileList);
-    System.out.println(this.filePath);
   }
 
   public void setFileList(List<String> fileList) {
     this.fileList = fileList;
-    System.out.println(this.isDirectory);
   }
 
-  public void write() throws IOException {
+  private void loadSingleFile(File file) throws IOException {
     try {
-      FileReader reader = new FileReader(this.filePath);
+      InputStream inputStream = new FileInputStream(file);
+      Reader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8);
       JSONParser jsonParser = new JSONParser();
-      Object obj = jsonParser.parse(reader);
-      if(obj instanceof JSONArray) {
-        JSONArray employeeList = (JSONArray) obj;
-        for (Object emp : employeeList) {
-          System.out.println(emp);
-          this.write(emp.toString());
+      Object jsonRecord = jsonParser.parse(reader);
+      if (jsonRecord instanceof JSONArray) {
+        JSONArray jsonArray = (JSONArray) jsonRecord;
+        for (Object record : jsonArray) {
+          this.write(record.toString());
         }
-      } else
-        this.write(obj.toString());
+      } else {
+        this.write(jsonRecord.toString());
+      }
     } catch (Exception e) {
       e.printStackTrace();
+      throw new IOException(e.getMessage());
+    }
+  }
+
+  /**
+   * Load data of all or selected json files at given location iteratively.
+   *
+   * @throws IOException
+   */
+  @Override
+  public void write() throws IOException {
+    if (this.filePath.length() == 0) {
+      throw new RuntimeException("'withJsonPath()' must be called to support load json files");
+    }
+    if (!this.isDirectory) {
+      this.loadSingleFile(new File(this.filePath));
+    } else {
+      if (this.fileList == null || this.fileList.size() == 0) {
+        File[] dataFiles = new File(this.filePath).listFiles();
+        if (dataFiles == null || dataFiles.length == 0) {
+          throw new RuntimeException("No JSON file found at given location. Please provide" +
+              "the correct folder location.");
+        }
+        Arrays.sort(dataFiles);
+        for (File dataFile : dataFiles) {
+          this.loadSingleFile(dataFile);
+        }
+      } else {
+        for (String file : this.fileList) {
+          this.loadSingleFile(new File(this.filePath + "/" + file));
+        }
+      }
     }
   }
 }

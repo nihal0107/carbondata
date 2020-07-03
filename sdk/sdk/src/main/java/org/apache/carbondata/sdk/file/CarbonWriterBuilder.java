@@ -945,19 +945,29 @@ public class CarbonWriterBuilder {
    * @param filePath absolute path under which files should be loaded.
    * @return CarbonWriterBuilder
    */
-  public CarbonWriterBuilder withJsonPath(String filePath) throws IOException {
+  public CarbonWriterBuilder withJsonPath(String filePath) {
     if (filePath.length() == 0) {
       throw new IllegalArgumentException("filePath can not be empty");
     }
     this.filePath = filePath;
     this.isDirectory = new File(filePath).isDirectory();
-    this.writerType = WRITER_TYPE.JSON;
-    this.buildJsonReader();
+    this.withJsonInput();
     return this;
   }
 
-  private void buildJsonReader() {
-
+  /**
+   * to build a {@link CarbonWriter}, which accepts JSON file directory and
+   * list of file which has to be loaded.
+   *
+   * @param filePath directory where the json file exists.
+   * @param fileList list of files which has to be loaded.
+   * @return CarbonWriterBuilder
+   * @throws IOException
+   */
+  public CarbonWriterBuilder withJsonPath(String filePath, List<String> fileList) {
+    this.fileList = fileList;
+    this.withJsonPath(filePath);
+    return this;
   }
 
   /**

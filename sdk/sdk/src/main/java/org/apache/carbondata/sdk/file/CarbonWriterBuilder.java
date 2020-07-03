@@ -36,6 +36,7 @@ import org.apache.carbondata.common.annotations.InterfaceAudience;
 import org.apache.carbondata.common.annotations.InterfaceStability;
 import org.apache.carbondata.common.constants.LoggerAction;
 import org.apache.carbondata.common.exceptions.sql.InvalidLoadOptionException;
+import org.apache.carbondata.common.logging.LogServiceFactory;
 import org.apache.carbondata.core.constants.CarbonCommonConstants;
 import org.apache.carbondata.core.datastore.impl.FileFactory;
 import org.apache.carbondata.core.metadata.datatype.DataType;
@@ -63,6 +64,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.ql.io.orc.OrcFile;
 import org.apache.hadoop.hive.ql.io.orc.Reader;
+import org.apache.log4j.Logger;
 import org.apache.orc.TypeDescription;
 import org.apache.parquet.avro.AvroReadSupport;
 import org.apache.parquet.hadoop.ParquetReader;
@@ -97,6 +99,8 @@ public class CarbonWriterBuilder {
   private String filePath;
   private boolean isDirectory = false;
   private List<String> fileList;
+  private static final Logger LOGGER =
+      LogServiceFactory.getLogService(CarbonWriterBuilder.class.getName());
 
   private enum WRITER_TYPE {
     CSV, AVRO, JSON, PARQUET, ORC
@@ -869,7 +873,7 @@ public class CarbonWriterBuilder {
       try {
         fieldList = childSchemas.get(i).getFieldNames();
       } catch (NullPointerException e) {
-        e.printStackTrace();
+        LOGGER.info("quad tree disJoint with query polygon envelope return");
       }
       childs[i] = orcToCarbonSchemaConverter(childSchemas.get(i), fieldList,
               fieldsName == null ? null : fieldsName.get(i));
@@ -941,19 +945,29 @@ public class CarbonWriterBuilder {
    * @param filePath absolute path under which files should be loaded.
    * @return CarbonWriterBuilder
    */
-  public CarbonWriterBuilder withJsonPath(String filePath) throws IOException {
+  public CarbonWriterBuilder withJsonPath(String filePath) {
     if (filePath.length() == 0) {
       throw new IllegalArgumentException("filePath can not be empty");
     }
     this.filePath = filePath;
     this.isDirectory = new File(filePath).isDirectory();
-    this.writerType = WRITER_TYPE.JSON;
-    this.buildJsonReader();
+    this.withJsonInput();
     return this;
   }
 
-  private void buildJsonReader() {
-
+  /**
+   * to build a {@link CarbonWriter}, which accepts JSON file directory and
+   * list of file which has to be loaded.
+   *
+   * @param filePath directory where the json file exists.
+   * @param fileList list of files which has to be loaded.
+   * @return CarbonWriterBuilder
+   * @throws IOException
+   */
+  public CarbonWriterBuilder withJsonPath(String filePath, List<String> fileList) {
+    this.fileList = fileList;
+    this.withJsonPath(filePath);
+    return this;
   }
 
   /**

@@ -251,15 +251,17 @@ private[sql] case class CarbonCreateSecondaryIndexCommand(
         throw new ErrorMessage(
           s"Table [$tableName] under database [$databaseName] is already an index table")
       }
-      // creation of index on long string columns are not supported
-      if (dims.filter(dimension => indexModel.columnNames
+
+      // creation of index on long string or binary columns are not supported
+      val errorMsg = "one or more index columns specified contains long string or binary column" +
+        s" in table $databaseName.$tableName. SI cannot be created on " +
+        s"long string or binary columns."
+      dims.filter(dimension => indexModel.columnNames
         .contains(dimension.getColName))
-        .map(_.getDataType)
-        .exists(dataType => dataType.equals(DataTypes.VARCHAR))) {
-        throw new ErrorMessage(
-          s"one or more index columns specified contains long string column" +
-          s" in table $databaseName.$tableName. SI cannot be created on long string columns.")
-      }
+        .map(_.getDataType).foreach(dataType =>
+        if (dataType.equals(DataTypes.VARCHAR) || dataType.equals(DataTypes.BINARY)) {
+          throw new ErrorMessage(errorMsg)
+        })
 
       // Check whether index table column order is same as another index table column order
       oldIndexInfo = carbonTable.getIndexInfo

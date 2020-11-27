@@ -23,6 +23,7 @@ import java.util.UUID
 import org.apache.spark.sql.test.util.QueryTest
 import org.scalatest.BeforeAndAfterAll
 
+import org.apache.carbondata.common.exceptions.sql.MalformedCarbonCommandException
 import org.apache.carbondata.core.datastore.impl.FileFactory
 import org.apache.carbondata.format.TableInfo
 
@@ -141,7 +142,8 @@ class TestCreateIndexTable extends QueryTest with BeforeAndAfterAll {
       assert(false)
     } catch {
       case ex: Exception =>
-        assert(true)
+        assert(ex.getMessage.contains("one or more specified index cols either " +
+          "does not exist or not a key column or complex column in table default.carbon"))
     } finally {
       sql("drop index if exists index_with_invalid_column on carbon")
     }
@@ -379,8 +381,8 @@ class TestCreateIndexTable extends QueryTest with BeforeAndAfterAll {
     }
     assert(thrown.getMessage
       .contains(
-        "one or more index columns specified contains long string column in table default" +
-        ".si_table. SI cannot be created on long string columns."))
+        "one or more index columns specified contains long string or binary column in table" +
+          " default.si_table. SI cannot be created on long string or binary columns."))
   }
 
   test("drop index on temp table") {
@@ -469,6 +471,68 @@ class TestCreateIndexTable extends QueryTest with BeforeAndAfterAll {
     "unknown doesn't exist or not a carbon table."))
   }
 
+  test("test SI creation on binary data type") {
+    sql("CREATE table carbontable (empno int, empname String, " +
+      "designation String, binarycol binary) STORED AS CARBONDATA")
+    val exception = intercept[RuntimeException] {
+      sql("CREATE INDEX indextable on carbontable(binarycol) as 'carbondata'")
+    }
+    assert(exception.getMessage.contains("one or more index columns specified " +
+      "contains long string or binary column in table default.carbontable. " +
+      "SI cannot be created on long string or binary columns."))
+    sql("drop table if exists carbontable")
+  }
+
+  test("test table creation with like for index table") {
+    sql("drop table if exists maintable")
+    sql("create table maintable (a string,b string,c int) STORED AS carbondata ")
+    sql("create index indextable on table maintable(b) AS 'carbondata'")
+    sql("insert into maintable values('k','x',2)")
+    sql("drop table if exists targetTable")
+    val exception = intercept[MalformedCarbonCommandException] {
+      sql("create table targetTable like indextable")
+    }
+    assert(exception.getMessage.contains("Unsupported operation on child " +
+      "table or MV or index table."))
+    sql("drop table if exists maintable")
+  }
+
+  test("test create index on partition column") {
+    sql("insert into part_si values('dsa',1,'def','asd','fgh')")
+    val exception = intercept[UnsupportedOperationException] {
+      sql("create index index_on_partitionTable on table part_si (c6) AS 'carbondata'")
+    }
+    assert(exception.getMessage.contains("Secondary Index cannot be " +
+      "created on a partition column."))
+  }
+
+  test("test create index on spatial index column") {
+    sql("drop table if exists maintable")
+    sql(s"""
+           | CREATE TABLE maintable(
+           | timevalue BIGINT,
+           | longitude LONG,
+           | latitude LONG) COMMENT "This is a GeoTable"
+           | STORED AS carbondata
+           | TBLPROPERTIES ('SPATIAL_INDEX'='mygeohash',
+           | 'SPATIAL_INDEX.mygeohash.type'='geohash',
+           | 'SPATIAL_INDEX.mygeohash.sourcecolumns'='longitude, latitude',
+           | 'SPATIAL_INDEX.mygeohash.originLatitude'='39.832277',
+           | 'SPATIAL_INDEX.mygeohash.gridSize'='50',
+           | 'SPATIAL_INDEX.mygeohash.minLongitude'='115.811865',
+           | 'SPATIAL_INDEX.mygeohash.maxLongitude'='116.782233',
+           | 'SPATIAL_INDEX.mygeohash.minLatitude'='39.832277',
+           | 'SPATIAL_INDEX.mygeohash.maxLatitude'='40.225281',
+           | 'SPATIAL_INDEX.mygeohash.conversionRatio'='1000000')
+       """.stripMargin)
+    val exception = intercept[RuntimeException] {
+      sql("create index index_on_spatial_col on table maintable (mygeohash) AS 'carbondata'")
+    }
+    assert(exception.getMessage.contains("Secondary Index is not supported for Spatial " +
+      "index column: mygeohash"))
+    sql("drop table if exists maintable")
+  }
+
   object CarbonMetastore {
 
     import org.apache.carbondata.core.reader.ThriftReader
@@ -517,5 +581,7 @@ class TestCreateIndexTable extends QueryTest with BeforeAndAfterAll {
 
     sql("drop index if exists t_ind1 on test1")
     sql("drop table if exists test1")
+    sql("drop table if exists stream_si")
+    sql("drop table if exists part_si")
   }
 }

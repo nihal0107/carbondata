@@ -24,13 +24,13 @@ import org.apache.spark.sql.CarbonEnv
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.strategy.CarbonDataSourceScan
 import org.apache.spark.sql.secondaryindex.joins.BroadCastSIFilterPushJoin
-import org.apache.spark.sql.secondaryindex.util.SecondaryIndexUtil
 import org.apache.spark.sql.test.{SparkTestQueryExecutor, TestQueryExecutor}
 import org.apache.spark.sql.test.util.QueryTest
 import org.junit.Test
 
 import org.apache.carbondata.core.statusmanager.{LoadMetadataDetails, SegmentStatusManager}
 import org.apache.carbondata.spark.rdd.CarbonScanRDD
+import org.apache.carbondata.spark.testsuite.secondaryindex.TestSecondaryIndexUtils
 
 /**
  * This test class will test the functionality of APIs
@@ -98,7 +98,7 @@ class TestCarbonSegmentUtil extends QueryTest {
   // Test identify segments to be merged with Major Compaction
   def test_identifySegmentsToBeMerged_Major() {
     createTable(tableName)
-    val expected = SecondaryIndexUtil
+    val expected = TestSecondaryIndexUtils
       .identifySegmentsToBeMerged(SparkTestQueryExecutor.spark,
         tableName,
         databaseName)
@@ -114,7 +114,7 @@ class TestCarbonSegmentUtil extends QueryTest {
     sql(s"delete from table $tableName where SEGMENT.ID in (2)")
     sql(s"delete from table $tableName where SEGMENT.ID in (1)")
     sql(s"show segments for table $tableName").collect()
-    val expected = SecondaryIndexUtil
+    val expected = TestSecondaryIndexUtils
       .identifySegmentsToBeMerged(SparkTestQueryExecutor.spark,
         tableName,
         databaseName)
@@ -131,7 +131,7 @@ class TestCarbonSegmentUtil extends QueryTest {
     val customSegments = new util.ArrayList[String]()
     customSegments.add("1")
     customSegments.add("2")
-    val expected = SecondaryIndexUtil
+    val expected = TestSecondaryIndexUtils
       .identifySegmentsToBeMergedCustom(SparkTestQueryExecutor.spark,
         tableName,
         databaseName,
@@ -148,7 +148,7 @@ class TestCarbonSegmentUtil extends QueryTest {
     val carbonTable = CarbonEnv
       .getCarbonTable(Option(databaseName), tableName)(SparkTestQueryExecutor.spark)
     val loadMetadataDetails = SegmentStatusManager.readLoadMetadata(carbonTable.getMetadataPath)
-    val expected = SecondaryIndexUtil
+    val expected = TestSecondaryIndexUtils
       .getMergedLoadName(loadMetadataDetails.toList.asJava)
     assert(expected.equalsIgnoreCase("Segment_0.1"))
     dropTables(tableName)
@@ -164,7 +164,7 @@ class TestCarbonSegmentUtil extends QueryTest {
       .getCarbonTable(Option(databaseName), tableName)(SparkTestQueryExecutor.spark)
     val loadMetadataDetails = SegmentStatusManager.readLoadMetadata(carbonTable.getMetadataPath)
     val exception = intercept[UnsupportedOperationException] {
-      SecondaryIndexUtil
+      TestSecondaryIndexUtils
         .getMergedLoadName(loadMetadataDetails.toList.asJava)
     }
     exception.getMessage
@@ -189,7 +189,7 @@ class TestCarbonSegmentUtil extends QueryTest {
     load.setLoadName("0")
     load.setLoadStartTime(System.currentTimeMillis())
     segments.add(load)
-    val expected = SecondaryIndexUtil
+    val expected = TestSecondaryIndexUtils
       .getMergedLoadName(segments)
     // scalastyle:off println
     println(expected)

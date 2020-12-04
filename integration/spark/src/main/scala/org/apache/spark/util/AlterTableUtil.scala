@@ -459,6 +459,19 @@ object AlterTableUtil {
           updateSchemaForLongStringColumns(thriftTable, "")
         }
       }
+      // validate set for streaming table
+      val streamingOption = lowerCasePropertiesMap.get("streaming")
+      if (streamingOption.isDefined && set) {
+        if (carbonTable.isIndexTable) {
+          throw new UnsupportedOperationException("Set streaming table is " +
+            "not allowed for index table.")
+        }
+        val indexTables = CarbonIndexUtil.getSecondaryIndexes(carbonTable)
+        if (!indexTables.isEmpty) {
+          throw new UnsupportedOperationException("Set streaming table is " +
+            "not allowed for tables which are having index(s).")
+        }
+      }
       // below map will be used for cache invalidation. As tblProperties map is getting modified
       // in the next few steps the original map need to be retained for any decision making
       val existingTablePropertiesMap = mutable.Map(tblPropertiesMap.toSeq: _*)

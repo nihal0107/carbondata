@@ -440,6 +440,24 @@ class TestSIWithSecondaryIndex extends QueryTest with BeforeAndAfterAll {
       "LONG_STRING_COLUMNS cannot be part of index table."))
     sql("drop table if exists maintable")
   }
+  
+  test("test alter table set streaming for table having SI") {
+    sql("drop table if exists maintable2")
+    sql("create table maintable2 (a string,b string,c int) STORED AS carbondata ")
+    sql("insert into maintable2 values('k','x',2)")
+    sql("create index m_indextable on table maintable2(b) AS 'carbondata'")
+    var exeption = intercept[RuntimeException] {
+      sql("ALTER TABLE maintable2 SET TBLPROPERTIES('streaming'='true')")
+    }
+    assert(exeption.getMessage.contains("Set streaming table is " +
+      "not allowed for tables which are having index(s)."))
+
+    exeption = intercept[RuntimeException] {
+      sql("ALTER TABLE m_indextable SET TBLPROPERTIES('streaming'='true')")
+    }
+    assert(exeption.getMessage.contains("Set streaming table is not allowed for index table."))
+    sql("drop table if exists maintable2")
+  }
 
   override def afterAll {
     dropIndexAndTable()

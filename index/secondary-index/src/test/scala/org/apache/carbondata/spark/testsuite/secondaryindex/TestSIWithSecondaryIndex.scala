@@ -16,20 +16,23 @@
  */
 package org.apache.carbondata.spark.testsuite.secondaryindex
 
-import scala.collection.JavaConverters._
+import mockit.{Mock, MockUp}
 
+import scala.collection.JavaConverters._
 import org.apache.commons.lang3.StringUtils
 import org.apache.spark.sql.{CarbonEnv, Row}
 import org.apache.spark.sql.test.util.QueryTest
 import org.scalatest.BeforeAndAfterAll
-
 import org.apache.carbondata.common.exceptions.sql.MalformedCarbonCommandException
 import org.apache.carbondata.core.constants.CarbonCommonConstants
+import org.apache.carbondata.core.datastore.exception.CarbonDataWriterException
 import org.apache.carbondata.core.statusmanager.{LoadMetadataDetails, SegmentStatus, SegmentStatusManager}
 import org.apache.carbondata.core.util.CarbonProperties
 import org.apache.carbondata.core.util.path.CarbonTablePath
+import org.apache.carbondata.processing.store.CarbonFactDataHandlerColumnar
 import org.apache.carbondata.spark.exception.ProcessMetaDataException
 import org.apache.carbondata.spark.testsuite.secondaryindex.TestSecondaryIndexUtils.isFilterPushedDownToSI
+import org.apache.spark.sql.secondaryindex.exception.SecondaryIndexException
 
 class TestSIWithSecondaryIndex extends QueryTest with BeforeAndAfterAll {
 
@@ -544,6 +547,29 @@ class TestSIWithSecondaryIndex extends QueryTest with BeforeAndAfterAll {
     assert(errorMessage.getMessage.contains("alter table drop column " +
       "is not supported for index table"))
     sql("drop table if exists maintable2")
+  }
+
+  test("test SI when carbon data handler will through exception") {
+    sql("drop table if exists maintable2")
+    sql("create table maintable2 (a string,b string,c string) STORED AS carbondata ")
+    sql("insert into maintable2 values('ab','cd','ef')")
+    val mock = mockDataHandler()
+    val ex = intercept[Exception] {
+      sql("create index m_indextable on table maintable2(b,c) AS 'carbondata'")
+    }
+    mock.tearDown()
+    assert(ex.getMessage.contains("Problem loading data while creating secondary index:"))
+  }
+
+  def mockDataHandler(): MockUp[CarbonFactDataHandlerColumnar] = {
+    val mock: MockUp[CarbonFactDataHandlerColumnar] = new MockUp[CarbonFactDataHandlerColumnar]() {
+      @Mock
+      def finish(): Unit = {
+        throw new CarbonDataWriterException ("An exception occurred while " +
+          "writing data to SI table.")
+      }
+    }
+    mock
   }
 
   def createAndInsertDataIntoTable(): Unit = {

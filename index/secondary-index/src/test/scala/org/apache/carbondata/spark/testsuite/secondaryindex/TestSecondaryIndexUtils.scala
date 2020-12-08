@@ -16,8 +16,11 @@
  */
 package org.apache.carbondata.spark.testsuite.secondaryindex
 
+import mockit.{Mock, MockUp}
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.secondaryindex.joins.BroadCastSIFilterPushJoin
+
+import org.apache.carbondata.core.locks.AbstractCarbonLock
 
 object TestSecondaryIndexUtils {
   /**
@@ -34,5 +37,15 @@ object TestSecondaryIndexUtils {
         broadCastSIFilterPushDown
     }
     isValidPlan
+  }
+
+  def mockTableLock(): MockUp[AbstractCarbonLock] = {
+    val mock: MockUp[AbstractCarbonLock] = new MockUp[AbstractCarbonLock]() {
+      @Mock
+      def lockWithRetries(): Boolean = {
+        false
+      }
+    }
+    mock
   }
 }

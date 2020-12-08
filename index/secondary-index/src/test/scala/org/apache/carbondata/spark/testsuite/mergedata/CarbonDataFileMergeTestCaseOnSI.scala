@@ -17,18 +17,25 @@
 package org.apache.carbondata.spark.testsuite.mergedata
 
 import java.io.{File, PrintWriter}
+import java.util
 
 import scala.util.Random
 
-import org.apache.spark.sql.CarbonEnv
+import mockit.{Mock, MockUp}
+import org.apache.spark.sql.{AnalysisException, CarbonEnv, SQLContext}
+import org.apache.spark.sql.secondaryindex.util.SecondaryIndexUtil
 import org.apache.spark.sql.test.util.QueryTest
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 
 import org.apache.carbondata.core.constants.CarbonCommonConstants
 import org.apache.carbondata.core.datastore.filesystem.{CarbonFile, CarbonFileFilter}
 import org.apache.carbondata.core.datastore.impl.FileFactory
+import org.apache.carbondata.core.metadata.schema.table.CarbonTable
+import org.apache.carbondata.core.statusmanager.LoadMetadataDetails
 import org.apache.carbondata.core.util.CarbonProperties
 import org.apache.carbondata.core.util.path.CarbonTablePath
+import org.apache.carbondata.processing.loading.model.CarbonLoadModel
+import org.apache.carbondata.spark.testsuite.secondaryindex.TestSecondaryIndexUtils
 import org.apache.carbondata.spark.testsuite.secondaryindex.TestSecondaryIndexUtils.isFilterPushedDownToSI
 
 class CarbonDataFileMergeTestCaseOnSI
@@ -285,6 +292,65 @@ class CarbonDataFileMergeTestCaseOnSI
     assert(getDataFileCount("nonindexmerge_index1", "1") < 15)
     CarbonProperties.getInstance().addProperty(CarbonCommonConstants.CARBON_SI_SEGMENT_MERGE,
       CarbonCommonConstants.CARBON_SI_SEGMENT_MERGE_DEFAULT)
+  }
+
+  test("test verify data file merge when exception occurred in rebuild segment") {
+    CarbonProperties.getInstance()
+      .addProperty(CarbonCommonConstants.CARBON_SI_SEGMENT_MERGE, "false")
+    sql("DROP TABLE IF EXISTS nonindexmerge")
+    sql(
+      """
+        | CREATE TABLE nonindexmerge(id INT, name STRING, city STRING, age INT)
+        | STORED AS carbondata
+        | TBLPROPERTIES('SORT_COLUMNS'='city,name', 'SORT_SCOPE'='GLOBAL_SORT')
+      """.stripMargin)
+    sql(s"LOAD DATA LOCAL INPATH '$file2' INTO TABLE nonindexmerge OPTIONS('header'='false', " +
+      s"'GLOBAL_SORT_PARTITIONS'='100')")
+    sql(s"LOAD DATA LOCAL INPATH '$file2' INTO TABLE nonindexmerge OPTIONS('header'='false', " +
+      s"'GLOBAL_SORT_PARTITIONS'='100')")
+    sql("CREATE INDEX nonindexmerge_index1 on table nonindexmerge (name) AS 'carbondata'")
+    // when merge data file will throw the exception
+    val mock1 = mockDataFileMerge()
+    val ex = intercept[RuntimeException] {
+      sql("REFRESH INDEX nonindexmerge_index1 ON TABLE nonindexmerge").collect()
+    }
+    mock1.tearDown()
+    assert(ex.getMessage.contains("An exception occurred while merging data files in SI"))
+    var df1 = sql("""Select * from nonindexmerge where name='n16000'""")
+      .queryExecution.sparkPlan
+    assert(isFilterPushedDownToSI(df1))
+    assert(getDataFileCount("nonindexmerge_index1", "0") == 100)
+    assert(getDataFileCount("nonindexmerge_index1", "1") == 100)
+    // not able to acquire lock on table
+    val mock2 = TestSecondaryIndexUtils.mockTableLock()
+    val exception = intercept[AnalysisException] {
+      sql("REFRESH INDEX nonindexmerge_index1 ON TABLE nonindexmerge").collect()
+    }
+    mock2.tearDown()
+    assert(exception.getMessage.contains("Table is already locked for compaction. " +
+      "Please try after some time."))
+    df1 = sql("""Select * from nonindexmerge where name='n16000'""")
+      .queryExecution.sparkPlan
+    assert(getDataFileCount("nonindexmerge_index1", "0") == 100)
+    assert(getDataFileCount("nonindexmerge_index1", "1") == 100)
+    CarbonProperties.getInstance().addProperty(CarbonCommonConstants.CARBON_SI_SEGMENT_MERGE,
+      CarbonCommonConstants.CARBON_SI_SEGMENT_MERGE_DEFAULT)
+  }
+
+  def mockDataFileMerge(): MockUp[SecondaryIndexUtil.type] = {
+    val mock: MockUp[SecondaryIndexUtil.type] = new MockUp[SecondaryIndexUtil.type ]() {
+      @Mock
+      def mergeDataFilesSISegments(segmentIdToLoadStartTimeMapping: scala.collection.mutable
+      .Map[String, java.lang.Long],
+       indexCarbonTable: CarbonTable,
+       loadsToMerge: util.List[LoadMetadataDetails],
+       carbonLoadModel: CarbonLoadModel,
+       isRebuildCommand: Boolean = false)
+      (sqlContext: SQLContext): Set[String] = {
+        throw new RuntimeException("An exception occurred while merging data files in SI")
+      }
+    }
+    mock
   }
 
   private def getDataFileCount(tableName: String, segment: String): Int = {

@@ -16,8 +16,10 @@
  */
 package org.apache.carbondata.spark.testsuite.secondaryindex
 
+import mockit.{Mock, MockUp}
 import org.apache.spark.sql.{CarbonEnv, Row}
 import org.apache.spark.sql.hive.CarbonRelation
+import org.apache.spark.sql.secondaryindex.events.SILoadEventListener
 import org.apache.spark.sql.test.SparkTestQueryExecutor
 import org.apache.spark.sql.test.util.QueryTest
 import org.scalatest.BeforeAndAfterAll
@@ -26,6 +28,7 @@ import org.apache.carbondata.core.constants.CarbonCommonConstants
 import org.apache.carbondata.core.statusmanager.{LoadMetadataDetails, SegmentStatus, SegmentStatusManager}
 import org.apache.carbondata.core.util.CarbonProperties
 import org.apache.carbondata.core.util.path.CarbonTablePath
+import org.apache.carbondata.events.{Event, OperationContext}
 
 /**
  * test cases for testing creation of index table with load and compaction
@@ -334,6 +337,31 @@ class TestCreateIndexWithLoadAndCompaction extends QueryTest with BeforeAndAfter
     assert(segInfos.length == 4)
     checkAnswer(sql("select * from table1 where c3='b2'"), Seq(Row(3, "a2", "b2")))
     sql("drop table if exists table1")
+  }
+
+  test("test SI load data when exception occurred") {
+    sql("use default")
+    sql("drop table if exists table1")
+    sql("create table table1(c1 int,c2 string,c3 string) stored as carbondata")
+    sql("create index idx1 on table table1(c3) as 'carbondata' ")
+    val mock = mockLoadEventListner()
+    val ex = intercept[RuntimeException] {
+      sql(s"insert into table1 values(1,'a1','b1')")
+    }
+    assert(ex.getMessage.contains("An exception occurred while loading data to SI table"))
+    mock.tearDown()
+    sql("drop table if exists table1")
+  }
+
+  def mockLoadEventListner(): MockUp[SILoadEventListener] = {
+    val mock: MockUp[SILoadEventListener] = new MockUp[SILoadEventListener]() {
+      @Mock
+      def onEvent(event: Event,
+                  operationContext: OperationContext): Unit = {
+        throw new RuntimeException("An exception occurred while loading data to SI table")
+      }
+    }
+    mock
   }
 
   override def afterAll: Unit = {

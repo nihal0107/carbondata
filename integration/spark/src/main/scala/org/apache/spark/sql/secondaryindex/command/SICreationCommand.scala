@@ -219,31 +219,20 @@ private[sql] case class CarbonCreateSecondaryIndexCommand(
                                  s" ${ spatialProperty.get.trim }")
         }
       }
+      // No. of index table cols are more than parent table key cols
+      if (indexModel.columnNames.size > dims.size) {
+        throw new ErrorMessage(s"Number of columns in Index table cannot be more than " +
+          "number of key columns in Source table")
+      }
       if (indexModel.columnNames.exists(x => !dimNames.contains(x))) {
         throw new ErrorMessage(
           s"one or more specified index cols either does not exist or not a key column or complex" +
           s" column in table $databaseName.$tableName")
       }
-      // Only Key cols are allowed while creating index table
-      val isInvalidColPresent = indexModel.columnNames.find(x => !dimNames.contains(x))
-      if (isInvalidColPresent.isDefined) {
-        throw new ErrorMessage(s"Invalid column name found : ${ isInvalidColPresent.get }")
-      }
-      if (indexModel.columnNames.exists(x => !dimNames.contains(x))) {
-        throw new ErrorMessage(
-          s"one or more specified index cols does not exist or not a key column or complex column" +
-          s" in table $databaseName.$tableName")
-      }
       // Check for duplicate column names while creating index table
       indexModel.columnNames.groupBy(col => col).foreach(f => if (f._2.size > 1) {
         throw new ErrorMessage(s"Duplicate column name found : ${ f._1 }")
       })
-
-      // No. of index table cols are more than parent table key cols
-      if (indexModel.columnNames.size > dims.size) {
-        throw new ErrorMessage(s"Number of columns in Index table cannot be more than " +
-                               "number of key columns in Source table")
-      }
 
       // Should not allow to create index on an index table
       val isIndexTable = carbonTable.isIndexTable

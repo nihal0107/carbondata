@@ -30,7 +30,7 @@ class TestCreateIndexForCleanAndDeleteSegment extends QueryTest with BeforeAndAf
     sql("drop table if exists clean_files_test")
   }
 
-  test("test secondary index for delete segment by id") {
+  test("test secondary index for delete segment by id and date") {
     sql("drop index if exists index_no_dictionary on delete_segment_by_id")
     sql("drop table if exists delete_segment_by_id")
 
@@ -52,6 +52,16 @@ class TestCreateIndexForCleanAndDeleteSegment extends QueryTest with BeforeAndAf
     checkAnswer(sql("select count(*) from delete_segment_by_id"),
       sql("select count(*) from index_no_dictionary"))
 
+    sql(s"LOAD DATA LOCAL INPATH '$resourcesPath/data.csv' INTO TABLE delete_segment_by_id " +
+      "OPTIONS('DELIMITER'=',','BAD_RECORDS_LOGGER_ENABLE'='FALSE','BAD_RECORDS_ACTION'='FORCE')")
+    val preDeleteSegmentsByDate = sql("SHOW SEGMENTS FOR TABLE delete_segment_by_id").count()
+    // delete segment by date
+    sql("delete from table delete_segment_by_id where " +
+      "SEGMENT.STARTTIME BEFORE '2025-06-01 12:05:06'")
+    checkAnswer(sql("select count(*) from delete_segment_by_id"),
+      sql("select count(*) from index_no_dictionary"))
+    val postDeleteSegmentsByDate = sql("SHOW SEGMENTS FOR TABLE delete_segment_by_id").count()
+    assert(preDeleteSegmentsByDate == postDeleteSegmentsByDate)
     sql("drop table if exists delete_segment_by_id")
   }
 

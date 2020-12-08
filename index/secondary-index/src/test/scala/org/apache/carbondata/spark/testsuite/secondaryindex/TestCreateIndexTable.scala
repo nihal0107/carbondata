@@ -95,16 +95,16 @@ class TestCreateIndexTable extends QueryTest with BeforeAndAfterAll {
 
   test("test create index table with indextable col size > parent table key col size") {
     try {
-      sql("create index indexOnCarbon on table carbon (empno,empname,designation,doj," +
-          "workgroupcategory,workgroupcategoryname,deptno,deptname,projectcode,projectjoindate," +
-          "projectenddate,attendance,utilization,salary) AS 'carbondata'")
+      sql("drop table if exists parentTable")
+      sql("create table parentTable(a string, b String) STORED AS carbondata")
+      sql("create index indexOnCarbon on table parentTable (a,b,positionid) AS 'carbondata'")
       assert(false)
     } catch {
       case ex: Exception =>
-        assert(ex.getMessage.equalsIgnoreCase(
-          "Secondary Index is not supported for measure column : deptno"))
+        assert(ex.getMessage.equalsIgnoreCase("Number of columns in " +
+          "Index table cannot be more than number of key columns in Source table"))
     } finally {
-      sql("drop index if exists indexOnCarbon on carbon")
+      sql("drop index if exists indexOnCarbon on parentTable")
     }
   }
 
@@ -446,10 +446,11 @@ class TestCreateIndexTable extends QueryTest with BeforeAndAfterAll {
     // create index
     sql(
       "create index si_drop_i1 on table carbon_si_same_name_test (designation) AS 'carbondata'")
-    intercept[Exception] {
+    val ex = intercept[Exception] {
       sql(
         "create index si_drop_i1 on table carbon_si_same_name_test (designation) AS 'carbondata'")
     }
+    assert(ex.getMessage.contains("Index [si_drop_i1] already exists under database [default]"))
     sql("DROP INDEX IF EXISTS si_drop_i1 on carbon_si_same_name_test")
     sql(
       "create index si_drop_i1 on table carbon_si_same_name_test (designation) AS 'carbondata'")
@@ -458,9 +459,12 @@ class TestCreateIndexTable extends QueryTest with BeforeAndAfterAll {
   }
 
   test("test blocking secondary Index on streaming table") {
-    intercept[RuntimeException] {
+    sql("use default")
+    val ex = intercept[RuntimeException] {
       sql("""create index streamin_index on table stream_si(c3) AS 'carbondata'""").collect()
     }
+    assert(ex.getMessage.contains("Parent Table  default.stream_si " +
+      "is Streaming Table and Secondary index on Streaming table is not supported"))
   }
 
   test("test SI creation on table which doesn't exist") {
@@ -472,6 +476,8 @@ class TestCreateIndexTable extends QueryTest with BeforeAndAfterAll {
   }
 
   test("test SI creation on binary data type") {
+    sql("use default")
+    sql("drop table if exists carbontable")
     sql("CREATE table carbontable (empno int, empname String, " +
       "designation String, binarycol binary) STORED AS CARBONDATA")
     val exception = intercept[RuntimeException] {
@@ -530,6 +536,31 @@ class TestCreateIndexTable extends QueryTest with BeforeAndAfterAll {
     }
     assert(exception.getMessage.contains("Secondary Index is not supported for Spatial " +
       "index column: mygeohash"))
+    sql("drop table if exists maintable")
+  }
+
+  test("test create index table on already selected column") {
+    sql("drop table if exists maintable")
+    sql("create table maintable (a string,b string,c int) STORED AS carbondata ")
+    sql("create index indextable on table maintable(b) AS 'carbondata'")
+    val exception = intercept[RuntimeException] {
+      sql("create index indextable2 on table maintable(b) AS 'carbondata'")
+    }
+    assert(exception.getMessage.contains("Index Table with selected columns already exist"))
+    sql("drop table if exists maintable")
+  }
+
+  test("test SI creation when other data modification operation is in progress") {
+    sql("use default")
+    sql("drop table if exists maintable")
+    sql("create table maintable (a string,b string,c int) STORED AS carbondata ")
+    val mock = TestSecondaryIndexUtils.mockTableLock()
+    val ex = intercept[RuntimeException] {
+      sql("create index indextable on table maintable(b) AS 'carbondata'")
+    }
+    assert(ex.getMessage.contains("Not able to acquire lock. Another Data Modification operation " +
+      "is already in progress for either default.maintable or default or indextable."))
+    mock.tearDown()
     sql("drop table if exists maintable")
   }
 

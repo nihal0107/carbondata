@@ -18,26 +18,36 @@ package org.apache.carbondata.spark.testsuite.secondaryindex
 
 import java.io.IOException
 import java.util
+import java.util.List
 
 import scala.collection.JavaConverters._
 
+import com.google.gson.Gson
 import mockit.{Mock, MockUp}
+import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.{CarbonEnv, Row, SparkSession, SQLContext}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.command.table.CarbonCreateDataSourceTableCommand
 import org.apache.spark.sql.index.CarbonIndexUtil
 import org.apache.spark.sql.secondaryindex.events.SILoadEventListener
+import org.apache.spark.sql.secondaryindex.hive.CarbonInternalMetastore
 import org.apache.spark.sql.secondaryindex.joins.BroadCastSIFilterPushJoin
 import org.apache.spark.sql.secondaryindex.util.SecondaryIndexUtil
 
 import org.apache.carbondata.core.datastore.exception.CarbonDataWriterException
 import org.apache.carbondata.core.locks.AbstractCarbonLock
+import org.apache.carbondata.core.metadata.blocklet.DataFileFooter
+import org.apache.carbondata.core.metadata.schema.indextable.IndexTableInfo
 import org.apache.carbondata.core.metadata.schema.table.CarbonTable
+import org.apache.carbondata.core.scan.expression.Expression
+import org.apache.carbondata.core.scan.result.iterator.RawResultIterator
 import org.apache.carbondata.core.statusmanager.{LoadMetadataDetails, SegmentStatusManager}
 import org.apache.carbondata.core.util.CarbonUtil
 import org.apache.carbondata.events.{Event, OperationContext}
+import org.apache.carbondata.indexserver.DistributedRDDUtils
 import org.apache.carbondata.processing.loading.model.{CarbonDataLoadSchema, CarbonLoadModel}
-import org.apache.carbondata.processing.merger.{CarbonDataMergerUtil, CompactionType}
+import org.apache.carbondata.processing.merger.{CarbonCompactionExecutor, CarbonCompactionUtil, CarbonDataMergerUtil, CompactionType}
 import org.apache.carbondata.processing.store.CarbonFactDataHandlerColumnar
 
 object TestSecondaryIndexUtils {
@@ -133,6 +143,157 @@ object TestSecondaryIndexUtils {
       def onEvent(event: Event,
                   operationContext: OperationContext): Unit = {
         throw new RuntimeException("An exception occurred while loading data to SI table")
+      }
+    }
+    mock
+  }
+
+  def mockreadSegmentList(): MockUp[SegmentStatusManager] = {
+    val mock: MockUp[SegmentStatusManager] = new MockUp[SegmentStatusManager]() {
+      @Mock
+      def readTableStatusFile(tableStatusPath: String): Array[LoadMetadataDetails] = {
+        if (tableStatusPath.contains("integration/spark/target/warehouse/idx1/Metadata")) {
+          new Gson().fromJson("[{\"timestamp\":\"1608113216908\",\"loadStatus\":\"Success\"," +
+              "\"loadName\":\"0\",\"dataSize\":\"790\",\"indexSize\":\"514\",\"loadStartTime\"" +
+              ":\"1608113213170\",\"segmentFile\":\"0_1608113213170.segment\"}," +
+              "{\"timestamp\":\"1608113217855\",\"loadStatus\":\"Success\",\"loadName\":\"1\"," +
+              "\"dataSize\":\"791\",\"indexSize\":\"514\",\"modificationOrDeletionTimestamp\"" +
+              ":\"1608113228366\",\"loadStartTime\":\"1608113217188\",\"mergedLoadName\":\"1.1\"," +
+              "\"segmentFile\":\"1_1608113217188.segment\"},{\"timestamp\":\"1608113218341\"," +
+              "\"loadStatus\":\"Compacted\",\"loadName\":\"2\",\"dataSize\":\"791\"," +
+              "\"indexSize\":" +
+              "\"514\",\"modificationOrDeletionTimestamp\":\"1608113228366\",\"loadStartTime\":" +
+              "\"1608113218057\",\"mergedLoadName\":\"1.1\",\"segmentFile\":\"2_1608113218057" +
+              ".segment\"},{\"timestamp\":\"1608113219267\",\"loadStatus\":\"Success\"," +
+              "\"loadName\":\"4\",\"dataSize\":\"791\",\"indexSize\":\"514\",\"loadStartTime\":" +
+              "\"1608113218994\",\"segmentFile\":\"4_1608113218994.segment\"},{\"timestamp\":" +
+              "\"1608113228366\",\"loadStatus\":\"Success\",\"loadName\":\"1.1\",\"dataSize\":" +
+              "\"831\",\"indexSize\":\"526\",\"loadStartTime\":\"1608113219441\",\"segmentFile\":" +
+              "\"1.1_1608113219441.segment\"}]", classOf[Array[LoadMetadataDetails]])
+        } else {
+          new Gson().fromJson("[{\"timestamp\":\"1608113216908\",\"loadStatus\":\"Success\"," +
+              "\"loadName\":\"0\",\"dataSize\":\"790\",\"indexSize\":\"514\",\"loadStartTime\"" +
+              ":\"1608113213170\",\"segmentFile\":\"0_1608113213170.segment\"}," +
+              "{\"timestamp\":\"1608113217855\",\"loadStatus\":\"Compacted\",\"loadName\":\"1\"," +
+              "\"dataSize\":\"791\",\"indexSize\":\"514\",\"modificationOrDeletionTimestamp\"" +
+              ":\"1608113228366\",\"loadStartTime\":\"1608113217188\",\"mergedLoadName\":\"1.1\"," +
+              "\"segmentFile\":\"1_1608113217188.segment\"},{\"timestamp\":\"1608113218341\"," +
+              "\"loadStatus\":\"Compacted\",\"loadName\":\"2\",\"dataSize\":\"791\"," +
+              "\"indexSize\":" +
+              "\"514\",\"modificationOrDeletionTimestamp\":\"1608113228366\",\"loadStartTime\":" +
+              "\"1608113218057\",\"mergedLoadName\":\"1.1\",\"segmentFile\":\"2_1608113218057" +
+              ".segment\"},{\"timestamp\":\"1608113219267\",\"loadStatus\":\"Success\"," +
+              "\"loadName\":\"4\",\"dataSize\":\"791\",\"indexSize\":\"514\",\"loadStartTime\":" +
+              "\"1608113218994\",\"segmentFile\":\"4_1608113218994.segment\"},{\"timestamp\":" +
+              "\"1608113228366\",\"loadStatus\":\"Success\",\"loadName\":\"1.1\",\"dataSize\":" +
+              "\"831\",\"indexSize\":\"526\",\"loadStartTime\":\"1608113219441\",\"segmentFile\":" +
+              "\"1.1_1608113219441.segment\"}]", classOf[Array[LoadMetadataDetails]])
+        }
+      }
+    }
+    mock
+  }
+
+  def mockSIDrop(): MockUp[CarbonInternalMetastore.type] = {
+    val mock: MockUp[CarbonInternalMetastore.type] = new MockUp[CarbonInternalMetastore.type]() {
+      @Mock
+      def deleteIndexSilent(carbonTableIdentifier: TableIdentifier,
+        storePath: String,
+        parentCarbonTable: CarbonTable)(sparkSession: SparkSession): Unit = {
+        throw new RuntimeException("An exception occurred while deleting SI table")
+      }
+    }
+    mock
+  }
+
+  def mockIndexInfo(): MockUp[IndexTableInfo] = {
+    val mock: MockUp[IndexTableInfo] = new MockUp[IndexTableInfo]() {
+      @Mock
+      def getIndexProperties(): util.Map[String, String] = {
+        null
+      }
+    }
+    mock
+  }
+
+  var countIsIndex: Int = 0
+  var countIsIndexTable : Int = 0
+
+  def mockIsIndexExists(): MockUp[CarbonIndexUtil.type] = {
+    val mock: MockUp[CarbonIndexUtil.type] = new MockUp[CarbonIndexUtil.type] {
+      @Mock
+      def isIndexExists(carbonTable: CarbonTable): String = {
+        countIsIndex += 1
+        if (countIsIndex > 1) {
+          carbonTable.getTableInfo.getFactTable.getTableProperties.get("indexexists")
+        } else {
+          null
+        }
+      }
+    }
+    mock
+  }
+
+  def mockIsIndexTableExists(): MockUp[CarbonIndexUtil.type] = {
+    val mock: MockUp[CarbonIndexUtil.type] = new MockUp[CarbonIndexUtil.type] {
+      @Mock
+      def isIndexTableExists(carbonTable: CarbonTable): String = {
+        countIsIndexTable += 1
+        if (countIsIndexTable > 1) {
+          carbonTable.getTableInfo.getFactTable.getTableProperties.get("indextableexists")
+        } else {
+          null
+        }
+      }
+    }
+    mock
+  }
+
+  def mockReturnEmptySecondaryIndexFromCarbon(): MockUp[CarbonIndexUtil.type] = {
+    val mock: MockUp[CarbonIndexUtil.type ] = new MockUp[CarbonIndexUtil.type]() {
+      @Mock
+      def getSecondaryIndexes(carbonTable: CarbonTable): java.util.List[String] = {
+        new java.util.ArrayList[String]
+      }
+    }
+    mock
+  }
+
+  var prePriming = 0
+  def mockPrePriming(): MockUp[DistributedRDDUtils.type] = {
+    val mock: MockUp[DistributedRDDUtils.type ] = new MockUp[DistributedRDDUtils.type]() {
+      @Mock
+      def triggerPrepriming(sparkSession: SparkSession,
+        carbonTable: CarbonTable,
+        invalidSegments: Seq[String],
+        operationContext: OperationContext,
+        conf: Configuration,
+        segmentId: List[String]): Unit = {
+        prePriming += 1
+        if (prePriming > 1) {
+          throw new RuntimeException("An exception occurred while triggering pre priming.")
+        }
+      }
+    }
+    mock
+  }
+
+  def mockCompactionExecutor(): MockUp[CarbonCompactionExecutor] = {
+    val mock: MockUp[CarbonCompactionExecutor] = new MockUp[CarbonCompactionExecutor]() {
+      @Mock
+      def processTableBlocks(configuration: Configuration, filterExpr: Expression):
+      util.Map[String, util.List[RawResultIterator]] = {
+        throw new IOException("An exception occurred while compaction executor.")
+      }
+    }
+    mock
+  }
+
+  def mockIsSortRequired(): MockUp[CarbonCompactionUtil] = {
+    val mock: MockUp[CarbonCompactionUtil] = new MockUp[CarbonCompactionUtil]() {
+      @Mock
+      def isSortedByCurrentSortColumns(table: CarbonTable, footer: DataFileFooter): Boolean = {
+        false
       }
     }
     mock

@@ -275,6 +275,8 @@ class TestCreateIndexWithLoadAndCompaction extends QueryTest with BeforeAndAfter
   }
 
   test("test custom compaction on main table which have SI tables") {
+    CarbonProperties.getInstance()
+        .addProperty(CarbonCommonConstants.CARBON_CLEAN_FILES_FORCE_ALLOWED, "true")
     sql("drop table if exists table1")
     sql("create table table1(c1 int,c2 string,c3 string) stored as carbondata")
     sql("create index idx1 on table table1(c3) as 'carbondata'")
@@ -283,11 +285,7 @@ class TestCreateIndexWithLoadAndCompaction extends QueryTest with BeforeAndAfter
     }
     sql("ALTER TABLE table1 COMPACT 'CUSTOM' WHERE SEGMENT.ID IN (1,2,3)")
 
-    val segments = sql("SHOW SEGMENTS FOR TABLE idx1")
-    val segInfos = segments.collect().map { each =>
-      ((each.toSeq) (0).toString, (each.toSeq) (1).toString)
-    }
-    assert(segInfos.length == 6)
+    val segInfos = checkSegmentList(6)
     assert(segInfos.contains(("0", "Success")))
     assert(segInfos.contains(("1", "Compacted")))
     assert(segInfos.contains(("2", "Compacted")))
@@ -295,7 +293,24 @@ class TestCreateIndexWithLoadAndCompaction extends QueryTest with BeforeAndAfter
     assert(segInfos.contains(("1.1", "Success")))
     assert(segInfos.contains(("4", "Success")))
     checkAnswer(sql("select * from table1 where c3='b2'"), Seq(Row(3, "a2", "b2")))
-    sql("drop table if exists table1")
+
+    // after clean files
+    val mock = TestSecondaryIndexUtils.mockreadSegmentList()
+    sql("CLEAN FILES FOR TABLE table1 options('force'='true')")
+    mock.tearDown()
+    checkSegmentList(4)
+    CarbonProperties.getInstance()
+        .addProperty(CarbonCommonConstants.CARBON_CLEAN_FILES_FORCE_ALLOWED,
+          CarbonCommonConstants.CARBON_CLEAN_FILES_FORCE_ALLOWED_DEFAULT)
+  }
+
+  def checkSegmentList(segmentSie: Int): Array[(String, String)] = {
+    val segments = sql("SHOW SEGMENTS FOR TABLE idx1")
+    val segInfos = segments.collect().map { each =>
+      (each.toSeq.head.toString, each.toSeq (1).toString)
+    }
+    assert(segInfos.length == segmentSie)
+    segInfos
   }
 
   test("test minor compaction on table with non-empty segment list" +
@@ -329,7 +344,7 @@ class TestCreateIndexWithLoadAndCompaction extends QueryTest with BeforeAndAfter
 
     val segments = sql("SHOW SEGMENTS FOR TABLE idx1")
     val segInfos = segments.collect().map { each =>
-      ((each.toSeq) (0).toString, (each.toSeq) (1).toString)
+      (each.toSeq.head.toString, each.toSeq (1).toString)
     }
     assert(segInfos.length == 4)
     checkAnswer(sql("select * from table1 where c3='b2'"), Seq(Row(3, "a2", "b2")))
@@ -348,6 +363,24 @@ class TestCreateIndexWithLoadAndCompaction extends QueryTest with BeforeAndAfter
     assert(ex.getMessage.contains("An exception occurred while loading data to SI table"))
     mock.tearDown()
     sql("drop table if exists table1")
+  }
+
+  test("test compaction when pre priming will throw exception") {
+    sql("drop table if exists table1")
+    sql("create table table1(c1 int,c2 string,c3 string) stored as carbondata")
+    sql("create index idx1 on table table1(c3) as 'carbondata' ")
+    sql("create index idx2 on table table1(c2, c3) as 'carbondata' ")
+    for (i <- 0 until 3) {
+      sql(s"insert into table1 values(${i + 1},'a$i','b$i')")
+    }
+    val mock = TestSecondaryIndexUtils.mockPrePriming()
+    val ex = intercept[Exception] {
+      sql("ALTER TABLE table1 COMPACT 'CUSTOM' WHERE SEGMENT.ID IN (1,2)")
+    }
+    assert(ex.getMessage.contains("An exception occurred while triggering pre priming."))
+    mock.tearDown()
+    checkExistence(sql("show indexes on table table1"), true,
+      "idx1", "idx2", "disabled", "enabled")
   }
 
   override def afterAll: Unit = {

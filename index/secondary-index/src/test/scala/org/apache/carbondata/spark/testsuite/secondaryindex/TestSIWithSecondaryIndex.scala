@@ -543,6 +543,18 @@ class TestSIWithSecondaryIndex extends QueryTest with BeforeAndAfterAll {
     sql("drop table if exists maintable2")
   }
 
+  test("test si with limit with index on all filter column") {
+    createAndInsertDataIntoTable()
+    sql("create index m_indextable on table maintable2(b) AS 'carbondata'")
+    checkAnswer(sql("select * from maintable2 where b='x' limit 1"), Seq(Row("k", "x", 2)))
+    checkAnswer(sql("select a, c from maintable2 where b='x' limit 1"), Seq(Row("k", 2)))
+    sql("insert into maintable2 values('ab','cd',20)")
+    sql("delete from maintable2 where b='x'")
+    checkAnswer(sql("select * from maintable2 where b='cd' limit 1"), Seq(Row("ab", "cd", 20)))
+    checkAnswer(sql("select a, c from maintable2 where b='cd' limit 1"), Seq(Row("ab", 20)))
+    sql("drop table if exists maintable2")
+  }
+
   test("test SI with add column and filter on default value") {
     createAndInsertDataIntoTable()
     sql("alter table maintable2 add columns (stringfield string) " +
@@ -575,6 +587,20 @@ class TestSIWithSecondaryIndex extends QueryTest with BeforeAndAfterAll {
     }
     mock.tearDown()
     assert(ex.getMessage.contains("Problem loading data while creating secondary index:"))
+  }
+
+  test("test SI with carbon.use.local.dir as true") {
+    CarbonProperties.getInstance()
+        .addProperty(CarbonCommonConstants.CARBON_LOADING_USE_YARN_LOCAL_DIR, "true")
+    sql("drop table if exists maintable2")
+    sql("create table maintable2 (a string,b string,c string) STORED AS carbondata ")
+    sql("create index m_indextable on table maintable2(b) AS 'carbondata'")
+    sql("insert into maintable2 values('ab','cd','ef')")
+    checkAnswer(sql("select * from maintable2 where b='cd'"), Row("ab", "cd", "ef"))
+    sql("drop table if exists maintable2")
+    CarbonProperties.getInstance()
+        .addProperty(CarbonCommonConstants.CARBON_LOADING_USE_YARN_LOCAL_DIR,
+          CarbonCommonConstants.CARBON_LOADING_USE_YARN_LOCAL_DIR_DEFAULT)
   }
 
   def createAndInsertDataIntoTable(): Unit = {

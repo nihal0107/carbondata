@@ -21,6 +21,7 @@ import org.apache.spark.sql.test.util.QueryTest
 import org.scalatest.BeforeAndAfterAll
 
 import org.apache.carbondata.common.exceptions.sql.MalformedCarbonCommandException
+import org.apache.carbondata.spark.exception.ProcessMetaDataException
 
 class DropTableTest extends QueryTest with BeforeAndAfterAll {
 
@@ -86,6 +87,20 @@ class DropTableTest extends QueryTest with BeforeAndAfterAll {
     sql("refresh index helloIndex1 on table testDrop")
     sql("drop index helloIndex1 on table testDrop")
     assert(sql("show indexes on testDrop").collect().isEmpty)
+    sql("drop table if exists testDrop")
+  }
+
+  test("test SI drop when some exception occur") {
+    sql("drop table if exists testDrop")
+    sql("create table testDrop (a string, b string, c string) STORED AS carbondata")
+    sql("create index indexTable on table testDrop (c) AS 'carbondata'")
+    sql("insert into testDrop values('ab', 'cd', 'ef')")
+    val mock = TestSecondaryIndexUtils.mockSIDrop()
+    val ex = intercept[ProcessMetaDataException] {
+      sql("drop table if exists testDrop")
+    }
+    mock.tearDown()
+    assert(ex.getMessage.contains("An exception occurred while deleting SI table"))
     sql("drop table if exists testDrop")
   }
 }

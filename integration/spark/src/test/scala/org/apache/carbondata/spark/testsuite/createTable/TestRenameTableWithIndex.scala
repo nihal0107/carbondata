@@ -38,7 +38,7 @@ class TestRenameTableWithIndex extends QueryTest with BeforeAndAfterAll {
       .addProperty(CarbonCommonConstants.ENABLE_QUERY_STATISTICS, "true")
   }
 
-  test("Creating a bloomfilter indexSchema,then table rename") {
+  test("Creating a bloomfilter, SI indexSchema,then table rename") {
     sql(
       s"""
          | CREATE TABLE carbon_table(
@@ -107,6 +107,17 @@ class TestRenameTableWithIndex extends QueryTest with BeforeAndAfterAll {
       s"""
          | explain select * from carbon_tb where name='eason'
        """.stripMargin).collect()
+
+    sql(
+      s"""
+         | CREATE INDEX dm_carbon_si
+         | ON TABLE carbon_tb (name, city)
+         | AS 'carbondata'
+      """.stripMargin)
+
+    sql(s"""alter TABLE carbon_tb rename to carbon_table""".stripMargin)
+    checkExistence(sql(s"""show indexes on table carbon_table""".stripMargin),
+      true, "dm_carbon_si")
   }
 
   /*

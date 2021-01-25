@@ -18,21 +18,25 @@
 package org.apache.spark.sql.execution.command.management
 
 import java.text.SimpleDateFormat
+import java.time.{Duration, Instant}
 import java.util
+import java.util.HashMap
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.execution.command.{AtomicRunnableCommand, DataLoadTableFileMapping}
 import org.apache.spark.sql.execution.datasources.{CatalogFileIndex, HadoopFsRelation, LogicalRelation, SparkCarbonTableFormat}
 import org.apache.spark.sql.types.{DateType, IntegerType, LongType, StringType, StructType, TimestampType}
 import org.apache.spark.util.{CarbonReflectionUtils, CausedBy, FileUtils}
-
 import org.apache.carbondata.common.logging.LogServiceFactory
+import org.apache.carbondata.core.constants.CarbonCommonConstants
 import org.apache.carbondata.core.datastore.impl.FileFactory
+import org.apache.carbondata.core.index.Segment
 import org.apache.carbondata.core.indexstore.PartitionSpec
+import org.apache.carbondata.core.metadata.SegmentFileStore
 import org.apache.carbondata.core.metadata.encoder.Encoding
 import org.apache.carbondata.core.metadata.schema.table.CarbonTable
 import org.apache.carbondata.core.statusmanager.{LoadMetadataDetails, SegmentStatus, SegmentStatusManager}
@@ -73,6 +77,8 @@ case class CarbonLoadDataCommand(databaseNameOp: Option[String],
 
   var dateFormat: SimpleDateFormat = _
 
+  var load: Seq[Row] = Seq()
+
   override def processMetadata(sparkSession: SparkSession): Seq[Row] = {
     val (sizeInBytes, table, dbName, logicalPartitionRelation, finalPartition) =
       CommonLoadUtils.processMetadataCommon(sparkSession,
@@ -86,6 +92,27 @@ case class CarbonLoadDataCommand(databaseNameOp: Option[String],
     this.finalPartition = finalPartition
     setAuditTable(dbName, tableName)
     Seq.empty
+  }
+
+  // add new columns of show segments at last
+//  override def output: Seq[Attribute] = {
+//    Seq(
+//      AttributeReference("ID", StringType, nullable = true)(),
+//      AttributeReference("Status", StringType, nullable = false)(),
+//      AttributeReference("Load Start Time", StringType, nullable = false)(),
+//      AttributeReference("Load Time Taken", StringType, nullable = true)(),
+//      AttributeReference("Partition", StringType, nullable = true)(),
+//      AttributeReference("Data Size", StringType, nullable = false)(),
+//      AttributeReference("Index Size", StringType, nullable = false)())
+//  }
+
+  // add new columns of show segments at last
+  override def output: Seq[Attribute] = {
+    Seq(
+      AttributeReference("ID", StringType, nullable = true)(),
+      AttributeReference("Number of files", StringType, nullable = false)(),
+      AttributeReference("Data Size", StringType, nullable = false)(),
+      AttributeReference("Index Size", StringType, nullable = false)())
   }
 
   override def processData(sparkSession: SparkSession): Seq[Row] = {
@@ -106,6 +133,7 @@ case class CarbonLoadDataCommand(databaseNameOp: Option[String],
     dateFormat = df
     var isUpdateTableStatusRequired = false
     val uuid = ""
+    var loadResult: LoadMetadataDetails = null
     try {
       val (tableIndexes, indexOperationContext) =
         CommonLoadUtils.firePreLoadEvents(
@@ -157,7 +185,8 @@ case class CarbonLoadDataCommand(databaseNameOp: Option[String],
         None,
         None,
         operationContext)
-      val (rows, loadResult) = loadData(loadParams)
+      val (rows, loadResults) = loadData(loadParams)
+      loadResult = loadResults
       val info = CommonLoadUtils.makeAuditInfo(loadResult)
       setAuditInfo(info)
       CommonLoadUtils.firePostLoadEvents(sparkSession,
@@ -191,7 +220,39 @@ case class CarbonLoadDataCommand(databaseNameOp: Option[String],
           throw ex
         }
     }
+    val segmentId = if (loadResult == null) {
+      carbonLoadModel.getSegmentId
+    } else {
+      loadResult.getLoadName
+    }
+    val segmentFileName = SegmentFileStore.genSegmentFileName(carbonLoadModel
+        .getSegmentId, String.valueOf(carbonLoadModel.getFactTimeStamp)) +
+        CarbonTablePath.SEGMENT_EXT
+//    val segmentFiles = SegmentFileStore.getSegmentFiles(CarbonTablePath
+//        .getSegmentFilesLocation(carbonLoadModel.getTablePath)
+    CarbonCommonConstants.FILE_SEPARATOR + segmentFileName
+    val dataSizeAndIndexSize = CarbonUtil.getDataSizeAndIndexSize(new SegmentFileStore
+    (carbonLoadModel.getTablePath, segmentFileName), true)
+    val dataSize = dataSizeAndIndexSize.get(CarbonCommonConstants.CARBON_TOTAL_DATA_SIZE).toString
+    val indexSize = dataSizeAndIndexSize.get(CarbonCommonConstants.CARBON_TOTAL_INDEX_SIZE).toString
+    // Seq(Row(segmentId, segmentFiles.length.toString, dataSize, indexSize))
+
+    // mapLoadResult(loadResult)
     Seq.empty
+  }
+
+  def mapLoadResult(loadMetadataDetails: LoadMetadataDetails): Seq[Row] = {
+    Seq(Row(
+      loadMetadataDetails.getLoadName,
+      loadMetadataDetails.getSegmentStatus.getMessage,
+      loadMetadataDetails.getLoadStartTime.toString,
+      Duration.between(
+        Instant.ofEpochMilli(loadMetadataDetails.getLoadStartTime),
+        Instant.ofEpochMilli(loadMetadataDetails.getLoadEndTime)
+      ).toString.replace("PT", ""),
+      loadMetadataDetails.getDataSize,
+      loadMetadataDetails.getIndexSize,
+      loadMetadataDetails.getFileFormat.toString))
   }
 
   def loadData(loadParams: CarbonLoadParams): (Seq[Row], LoadMetadataDetails) = {

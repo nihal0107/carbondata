@@ -217,3 +217,19 @@ Note: This command is not supported with other concurrent operations.
 ## Complex DataType support on SI
 Currently, only complex Array types are supported for creating secondary indexes. Nested Array
 support and other complex types support will be supported in the future.
+
+## Use Secondary Index as a Coarse Grain Index in query processing (Alpha Feature)
+Secondary Indexes are used in main table query pruning by rewriting the Spark plan during course of 
+query execution. It is not possible to use Secondary Indexes in the query pruning when the query is 
+fired from engines other than Spark (i.e., Presto, Hive etc). To address this issue, 
+Secondary Index is implemented as a Coarse Grain Index similar to Bloom. Coarse Grain Index pruning 
+happens right after default pruning of the table being queried. A new property is introduced at 
+session level and carbon level to support Secondary Index as a Coarse Grain Index. The property 
+```carbon.coarse.grain.secondary.index``` default value is ```false``` for Spark session and 
+```true``` for Presto. When it is set to ```true```, Secondary Index is applied as a Coarse Grain 
+Index. Since the feature is newly introduced, unless existing queries are working with Coarse Grain 
+Secondary Index, and the performance improvement is evident, It is recommended to avoid using this 
+property for the existing customers using the Secondary Indexes with Spark queries. This property 
+when specified along with database name and table name (i.e., 
+```carbon.coarse.grain.secondary.index.<dbname>.<tablename>```), ensures that Secondary Index 
+as Coarse Grain Index can be applied for queries on a particular table.

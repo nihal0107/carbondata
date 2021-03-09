@@ -170,6 +170,8 @@ public class CarbondataModule extends HiveModule {
     // configure carbon properties
     CarbonProperties.getInstance()
         .addProperty(CarbonCommonConstants.IS_QUERY_FROM_PRESTO, "true");
+    CarbonProperties.getInstance()
+        .addProperty(CarbonCommonConstants.CARBON_COARSE_GRAIN_SECONDARY_INDEX, "true");
   }
 
 }

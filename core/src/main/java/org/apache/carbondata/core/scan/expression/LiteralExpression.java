@@ -17,7 +17,13 @@
 
 package org.apache.carbondata.core.scan.expression;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.TimeZone;
+
+import org.apache.carbondata.core.constants.CarbonCommonConstants;
 import org.apache.carbondata.core.metadata.datatype.DataType;
+import org.apache.carbondata.core.metadata.datatype.DataTypes;
 import org.apache.carbondata.core.scan.filter.intf.ExpressionType;
 import org.apache.carbondata.core.scan.filter.intf.RowIntf;
 
@@ -58,7 +64,28 @@ public class LiteralExpression extends LeafExpression {
 
   @Override
   public String getStatement() {
-    return value == null ? null : value.toString();
+    boolean quoteString = false;
+    Object val = value;
+    if (val != null) {
+      if (dataType == DataTypes.STRING || val instanceof String) {
+        quoteString = true;
+      } else if (dataType == DataTypes.TIMESTAMP) {
+        SimpleDateFormat parser =
+            new SimpleDateFormat(CarbonCommonConstants.CARBON_TIMESTAMP_DEFAULT_FORMAT);
+        val = parser.format(new Date((Long) val / 1000L));
+        quoteString = true;
+      } else if (dataType == DataTypes.DATE) {
+        SimpleDateFormat parser =
+            new SimpleDateFormat(CarbonCommonConstants.CARBON_DATE_DEFAULT_FORMAT);
+        Date date = val instanceof Long ?
+            new Date((Long) val / 1000L) :
+            new Date((long) (int) val * 86400000L);
+        parser.setTimeZone(TimeZone.getTimeZone("GMT"));
+        val = parser.format(date);
+        quoteString = true;
+      }
+    }
+    return val == null ? null : quoteString ? "'" + val.toString() + "'" : val.toString();
   }
 
   /**

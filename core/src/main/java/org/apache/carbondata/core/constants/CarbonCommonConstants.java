@@ -2316,6 +2316,12 @@ public final class CarbonCommonConstants {
   @CarbonProperty(dynamicConfigurable = true)
   public static final String CARBON_ENABLE_INDEX_SERVER = "carbon.enable.index.server";
 
+  @CarbonProperty(dynamicConfigurable = true)
+  public static final String CARBON_COARSE_GRAIN_SECONDARY_INDEX =
+      "carbon.coarse.grain.secondary.index";
+
+  public static final String CARBON_COARSE_GRAIN_SECONDARY_INDEX_DEFAULT = "false";
+
   /**
    * Configured property to enable/disable prepriming in index server
    */

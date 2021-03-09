@@ -265,6 +265,7 @@ public class CarbonTableReader {
     config.set("query.id", queryId);
     CarbonInputFormat.setTransactionalTable(config, carbonTable.isTransactionalTable());
     CarbonInputFormat.setTableInfo(config, carbonTable.getTableInfo());
+    CarbonInputFormat.checkAndSetSecondaryIndexPruning(carbonTable.getTableInfo(), filters, config);
 
     JobConf jobConf = new JobConf(config);
     try {

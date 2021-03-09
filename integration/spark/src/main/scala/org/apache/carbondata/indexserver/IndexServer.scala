@@ -36,7 +36,7 @@ import org.apache.spark.sql.util.SparkSQLUtil
 
 import org.apache.carbondata.common.logging.LogServiceFactory
 import org.apache.carbondata.core.constants.CarbonCommonConstants
-import org.apache.carbondata.core.index.IndexInputFormat
+import org.apache.carbondata.core.index.{IndexInputFormat, IndexStoreManager}
 import org.apache.carbondata.core.indexstore.{ExtendedBlockletWrapperContainer, SegmentWrapperContainer}
 import org.apache.carbondata.core.metadata.schema.table.CarbonTable
 import org.apache.carbondata.core.util.{CarbonProperties, CarbonUtil}
@@ -177,15 +177,22 @@ object IndexServer extends ServerInterface {
         DistributedRDDUtils
           .invalidateSegmentMapping(request.getCarbonTable.getTableUniqueName,
             request.getInvalidSegments.asScala)
+        IndexStoreManager.getInstance()
+          .clearInvalidSegments(request.getCarbonTable, request.getInvalidSegments)
       }
-      val splits = new DistributedPruneRDD(sparkSession, request).collect()
-      if (!request.isFallbackJob) {
-        DistributedRDDUtils.updateExecutorCacheSize(splits.map(_._1).toSet)
+      if (request.isSIPruningEnabled) {
+        new ExtendedBlockletWrapperContainer(Array(DistributedRDDUtils.pruneOnDriver(request)),
+          request.isFallbackJob)
+      } else {
+        val splits = new DistributedPruneRDD(sparkSession, request).collect()
+        if (!request.isFallbackJob) {
+          DistributedRDDUtils.updateExecutorCacheSize(splits.map(_._1).toSet)
+        }
+        if (request.isJobToClearIndexes) {
+          DistributedRDDUtils.invalidateTableMapping(request.getCarbonTable.getTableUniqueName)
+        }
+        new ExtendedBlockletWrapperContainer(splits.map(_._2), request.isFallbackJob)
       }
-      if (request.isJobToClearIndexes) {
-        DistributedRDDUtils.invalidateTableMapping(request.getCarbonTable.getTableUniqueName)
-      }
-      new ExtendedBlockletWrapperContainer(splits.map(_._2), request.isFallbackJob)
     }
   }
 
@@ -265,8 +272,8 @@ object IndexServer extends ServerInterface {
           server.stop()
         }
       })
-      CarbonProperties.getInstance().addProperty(CarbonCommonConstants
-        .CARBON_ENABLE_INDEX_SERVER, "true")
+      CarbonProperties.getInstance()
+        .addProperty(CarbonCommonConstants.CARBON_ENABLE_INDEX_SERVER, "true")
       CarbonProperties.getInstance().addNonSerializableProperty(CarbonCommonConstants
         .IS_DRIVER_INSTANCE, "true")
       // when restart index service clean the tmp folder

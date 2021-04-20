@@ -39,6 +39,7 @@ import org.apache.carbondata.core.index.dev.IndexBuilder;
 import org.apache.carbondata.core.index.dev.IndexWriter;
 import org.apache.carbondata.core.index.dev.cgindex.CoarseGrainIndex;
 import org.apache.carbondata.core.index.dev.cgindex.CoarseGrainIndexFactory;
+import org.apache.carbondata.core.metadata.index.IndexType;
 import org.apache.carbondata.core.metadata.schema.table.CarbonTable;
 import org.apache.carbondata.core.metadata.schema.table.IndexSchema;
 import org.apache.carbondata.core.scan.filter.intf.ExpressionType;
@@ -63,6 +64,7 @@ public class SecondaryIndexFactory extends CoarseGrainIndexFactory {
     List<ExpressionType> operations = new ArrayList<>(Arrays.asList(ExpressionType.values()));
     indexMeta = new IndexMeta(indexSchema.getIndexName(),
         carbonTable.getIndexedColumns(indexSchema.getIndexColumns()), operations);
+    indexMeta.setIndexType(IndexType.SI);
     LOGGER.info("Created Secondary Index Factory instance for " + indexSchema.getIndexName());
   }
 
@@ -101,6 +103,9 @@ public class SecondaryIndexFactory extends CoarseGrainIndexFactory {
     secondaryIndex.init(
         new SecondaryIndexModel(getIndexSchema().getIndexName(), segment.getSegmentNo(),
             allSegmentIds, positionReferenceInfo, segment.getConfiguration()));
+    secondaryIndex.setIndexTablePath(getCarbonTable().getTablePath()
+        .replace(getCarbonTable().getTableName(), getIndexSchema().getIndexName()));
+    secondaryIndex.setDefaultIndexPrunedBlocklet(segment.getDefaultIndexPrunedBlocklets());
     indexes.add(secondaryIndex);
     return indexes;
   }

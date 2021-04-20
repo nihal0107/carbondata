@@ -108,4 +108,14 @@ public abstract class IndexExprWrapper implements Serializable {
       throws IOException {
     return null;
   }
+
+  private boolean isSecondaryIndexPresent;
+
+  public void setIsSecondaryIndexPresent(boolean isSecondaryIndex) {
+    isSecondaryIndexPresent = isSecondaryIndex;
+  }
+
+  public boolean isSecondaryIndexPresent() {
+    return isSecondaryIndexPresent;
+  }
 }

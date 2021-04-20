@@ -30,6 +30,7 @@ import org.apache.carbondata.core.index.TableIndex;
 import org.apache.carbondata.core.index.dev.Index;
 import org.apache.carbondata.core.indexstore.ExtendedBlocklet;
 import org.apache.carbondata.core.indexstore.PartitionSpec;
+import org.apache.carbondata.core.metadata.index.IndexType;
 import org.apache.carbondata.core.metadata.schema.table.IndexSchema;
 import org.apache.carbondata.core.scan.filter.resolver.FilterResolverIntf;
 
@@ -47,6 +48,11 @@ public class IndexExprWrapperImpl extends IndexExprWrapper {
     this.index = index;
     this.expression = expression;
     this.uniqueId = UUID.randomUUID().toString();
+    if (index.getIndexFactory().getIndexType() != null
+        && index.getIndexFactory().getIndexType().getIndexProviderName()
+        .equalsIgnoreCase(IndexType.SI.getIndexProviderName())) {
+      this.setIsSecondaryIndexPresent(true);
+    }
   }
 
   @Override

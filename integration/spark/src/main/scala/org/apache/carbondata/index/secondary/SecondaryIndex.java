@@ -23,20 +23,25 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.carbondata.common.logging.LogServiceFactory;
+import org.apache.carbondata.core.constants.CarbonCommonConstants;
 import org.apache.carbondata.core.datastore.block.SegmentProperties;
 import org.apache.carbondata.core.index.IndexUtil;
 import org.apache.carbondata.core.index.dev.IndexModel;
 import org.apache.carbondata.core.index.dev.cgindex.CoarseGrainIndex;
 import org.apache.carbondata.core.indexstore.Blocklet;
+import org.apache.carbondata.core.indexstore.ExtendedBlocklet;
 import org.apache.carbondata.core.metadata.schema.table.CarbonTable;
 import org.apache.carbondata.core.scan.expression.Expression;
 import org.apache.carbondata.core.scan.filter.executer.FilterExecutor;
 import org.apache.carbondata.core.scan.filter.resolver.FilterResolverIntf;
+import org.apache.carbondata.core.statusmanager.LoadMetadataDetails;
+import org.apache.carbondata.core.statusmanager.SegmentStatus;
+import org.apache.carbondata.core.statusmanager.SegmentStatusManager;
+import org.apache.carbondata.core.util.path.CarbonTablePath;
 import org.apache.carbondata.index.secondary.SecondaryIndexModel.PositionReferenceInfo;
 
+import org.apache.hadoop.conf.Configuration;
 import org.apache.log4j.Logger;
-
-import static org.apache.carbondata.core.util.path.CarbonTablePath.BATCH_PREFIX;
 
 /**
  * Secondary Index to prune at blocklet level.
@@ -48,6 +53,8 @@ public class SecondaryIndex extends CoarseGrainIndex {
   private String currentSegmentId;
   private List<String> validSegmentIds;
   private PositionReferenceInfo positionReferenceInfo;
+  private String indexPath;
+  private List<ExtendedBlocklet> extendedBlockletList;
 
   @Override
   public void init(IndexModel indexModel) {
@@ -57,6 +64,14 @@ public class SecondaryIndex extends CoarseGrainIndex {
     currentSegmentId = model.currentSegmentId;
     validSegmentIds = model.validSegmentIds;
     positionReferenceInfo = model.positionReferenceInfo;
+  }
+
+  public void setIndexTablePath(String indexPath) {
+    this.indexPath = indexPath;
+  }
+
+  public void setDefaultIndexPrunedBlocklet(List<ExtendedBlocklet> extendedBlockletList) {
+    this.extendedBlockletList = extendedBlockletList;
   }
 
   private Set<String> getPositionReferences(String databaseName, String indexName,
@@ -73,14 +88,27 @@ public class SecondaryIndex extends CoarseGrainIndex {
               expression.getStatement()));
       for (Object row : rows) {
         String positionReference = (String) row;
-        int blockPathIndex = positionReference.indexOf("/");
-        String segmentId = positionReference.substring(0, blockPathIndex);
-        String blockPath = positionReference.substring(blockPathIndex + 1);
-        Set<String> blockPaths = positionReferenceInfo.getSegmentToPosReferences()
-            .computeIfAbsent(segmentId, k -> new HashSet<>());
-        blockPaths.add(blockPath);
+        int blockletPathIndex = positionReference.indexOf("/");
+        String blockletPath = positionReference.substring(blockletPathIndex + 1);
+        int segEndIndex = blockletPath.lastIndexOf(CarbonCommonConstants.DASH);
+        int segStartIndex = blockletPath.lastIndexOf(CarbonCommonConstants.DASH, segEndIndex - 1);
+        Set<String> blockletPaths = positionReferenceInfo.getSegmentToPosReferences()
+            .computeIfAbsent(blockletPath.substring(segStartIndex + 1, segEndIndex),
+                k -> new HashSet<>());
+        blockletPaths.add(blockletPath);
       }
       positionReferenceInfo.setFetched(true);
+      Set<String> validSISegments = new HashSet<>();
+      LoadMetadataDetails[] loadMetadataDetails = SegmentStatusManager
+          .readLoadMetadata(CarbonTablePath.getMetadataPath(indexPath));
+      for(LoadMetadataDetails loadMetadataDetail: loadMetadataDetails) {
+        if (loadMetadataDetail.getSegmentStatus() == SegmentStatus.SUCCESS
+            || loadMetadataDetail.getSegmentStatus() == SegmentStatus.MARKED_FOR_UPDATE
+            || loadMetadataDetail.getSegmentStatus() == SegmentStatus.LOAD_PARTIAL_SUCCESS) {
+          validSISegments.add(loadMetadataDetail.getLoadName());
+        }
+      }
+      positionReferenceInfo.setValidSISegments(validSISegments);
     }
     Set<String> blockPaths =
         positionReferenceInfo.getSegmentToPosReferences().get(currentSegmentId);
@@ -93,15 +121,17 @@ public class SecondaryIndex extends CoarseGrainIndex {
     Set<String> positionReferences = getPositionReferences(carbonTable.getDatabaseName(), indexName,
         filterExp.getFilterExpression());
     List<Blocklet> blocklets = new ArrayList<>();
-    for (String blockPath : positionReferences) {
-      int blockletIndex = blockPath.lastIndexOf("/");
-      int taskNoStartIndex = blockPath.indexOf("-") + 1;
-      int taskNoEndIndex = blockPath.indexOf("_");
-      Blocklet blocklet = new Blocklet(
-          blockPath.substring(taskNoStartIndex, taskNoEndIndex) + BATCH_PREFIX + blockPath
-              .substring(taskNoEndIndex + 1, blockletIndex),
-          blockPath.substring(blockletIndex + 1));
-      blocklets.add(blocklet);
+    if (positionReferenceInfo.getValidSISegments() != null
+        && !positionReferenceInfo.getValidSISegments().contains(currentSegmentId)) {
+      blocklets.addAll(extendedBlockletList);
+    } else {
+      for (String blockletPath : positionReferences) {
+        blockletPath = blockletPath.substring(blockletPath.indexOf(CarbonCommonConstants.DASH) + 1)
+            .replace(CarbonCommonConstants.UNDERSCORE, CarbonTablePath.BATCH_PREFIX);
+        int blockletIndex = blockletPath.lastIndexOf("/");
+        blocklets.add(new Blocklet(blockletPath.substring(0, blockletIndex),
+            blockletPath.substring(blockletIndex + 1)));
+      }
     }
     if (LOGGER.isDebugEnabled()) {
       LOGGER.debug(String

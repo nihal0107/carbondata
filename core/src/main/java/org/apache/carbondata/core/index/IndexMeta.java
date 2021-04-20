@@ -21,6 +21,7 @@ import java.util.List;
 
 import org.apache.carbondata.common.annotations.InterfaceAudience;
 import org.apache.carbondata.common.annotations.InterfaceStability;
+import org.apache.carbondata.core.metadata.index.IndexType;
 import org.apache.carbondata.core.metadata.schema.table.column.CarbonColumn;
 import org.apache.carbondata.core.scan.filter.intf.ExpressionType;
 
@@ -39,6 +40,8 @@ public class IndexMeta {
   private List<CarbonColumn> indexedColumns;
 
   private List<ExpressionType> optimizedOperation;
+
+  private IndexType indexType;
 
   public IndexMeta(List<CarbonColumn> indexedColumns,
       List<ExpressionType> optimizedOperation) {
@@ -83,5 +86,13 @@ public class IndexMeta {
         .append(optimizedOperation)
         .append("'}")
         .toString();
+  }
+
+  public void setIndexType(IndexType indexType) {
+    this.indexType = indexType;
+  }
+
+  public IndexType getIndexType() {
+    return indexType;
   }
 }

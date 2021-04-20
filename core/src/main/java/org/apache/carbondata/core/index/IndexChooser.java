@@ -182,6 +182,8 @@ public class IndexChooser {
               ExpressionTuple tuple = new ExpressionTuple();
               tuple.columnExpressions = columnExpressions;
               tuple.indexExprWrapper = new IndexExprWrapperImpl(index, resolver);
+              tuple.indexExprWrapper.setIsSecondaryIndexPresent(left.indexExprWrapper
+                  .isSecondaryIndexPresent() || right.indexExprWrapper.isSecondaryIndexPresent());
               tuple.expression = resolver.getFilterExpression();
               return tuple;
             } else {
@@ -190,6 +192,8 @@ public class IndexChooser {
               tuple.columnExpressions = columnExpressions;
               tuple.indexExprWrapper = new AndIndexExprWrapper(left.indexExprWrapper,
                   right.indexExprWrapper, resolver);
+              tuple.indexExprWrapper.setIsSecondaryIndexPresent(left.indexExprWrapper
+                  .isSecondaryIndexPresent() || right.indexExprWrapper.isSecondaryIndexPresent());
               tuple.expression = resolver.getFilterExpression();
               return tuple;
             }
@@ -222,6 +226,8 @@ public class IndexChooser {
             tuple.columnExpressions = columnExpressions;
             tuple.indexExprWrapper = new OrIndexExprWrapper(left.indexExprWrapper,
                 right.indexExprWrapper, resolver);
+            tuple.indexExprWrapper.setIsSecondaryIndexPresent(left.indexExprWrapper
+                .isSecondaryIndexPresent() || right.indexExprWrapper.isSecondaryIndexPresent());
             tuple.expression = resolver.getFilterExpression();
             return tuple;
           } else {

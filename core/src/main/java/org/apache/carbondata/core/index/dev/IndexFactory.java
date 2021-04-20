@@ -33,6 +33,7 @@ import org.apache.carbondata.core.index.Segment;
 import org.apache.carbondata.core.index.dev.cgindex.CoarseGrainIndex;
 import org.apache.carbondata.core.index.dev.expr.IndexInputSplitWrapper;
 import org.apache.carbondata.core.metadata.AbsoluteTableIdentifier;
+import org.apache.carbondata.core.metadata.index.IndexType;
 import org.apache.carbondata.core.metadata.schema.table.CarbonTable;
 import org.apache.carbondata.core.metadata.schema.table.IndexSchema;
 import org.apache.carbondata.events.Event;
@@ -201,5 +202,9 @@ public abstract class IndexFactory<T extends Index> {
 
   public String getCacheSize() {
     return null;
+  }
+
+  public IndexType getIndexType() {
+    return getMeta() != null ? getMeta().getIndexType() : null;
   }
 }

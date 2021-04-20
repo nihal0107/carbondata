@@ -72,6 +72,8 @@ public class SecondaryIndexModel extends IndexModel {
      */
     private final Map<String, Set<String>> segmentToPosReferences = new HashMap<>();
 
+    private Set<String> validSISegments;
+
     public boolean isFetched() {
       return fetched;
     }
@@ -82,6 +84,14 @@ public class SecondaryIndexModel extends IndexModel {
 
     public Map<String, Set<String>> getSegmentToPosReferences() {
       return segmentToPosReferences;
+    }
+
+    public void setValidSISegments(Set<String> validSISegments) {
+      this.validSISegments = validSISegments;
+    }
+
+    public Set<String> getValidSISegments() {
+      return validSISegments;
     }
   }
 }

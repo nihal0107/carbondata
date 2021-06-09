@@ -72,7 +72,9 @@ class UpdateCarbonTableTestCase extends QueryTest with BeforeAndAfterAll {
     sql("""drop table if exists iud.zerorows""").collect()
     sql("""create table iud.zerorows (c1 string,c2 int,c3 string,c5 string) STORED AS carbondata""")
     sql(s"""LOAD DATA LOCAL INPATH '$resourcesPath/IUD/dest.csv' INTO table iud.zerorows""")
+    sql("show segments on zerorows").show()
     sql("""update zerorows d  set (d.c2) = (d.c2 + 1) where d.c1 = 'a'""").collect()
+    sql("show segments on zerorows").show()
     sql("""update zerorows d  set (d.c2) = (d.c2 + 1) where d.c1 = 'xxx'""").collect()
     checkAnswer(
       sql("""select c1,c2,c3,c5 from iud.zerorows"""),
@@ -84,6 +86,7 @@ class UpdateCarbonTableTestCase extends QueryTest with BeforeAndAfterAll {
     )
     sql("""update zerorows d  set (d.c2) = (d.c2 + 1) where d.c1 = 'e'""").collect()
     sql("clean files for table iud.zerorows options('force'='true')")
+    sql("show segments on zerorows").show()
     assert(CarbonTestUtil.getSegmentFileCount("iud_zerorows") == 3)
     CarbonProperties.getInstance().addProperty("carbon.clean.file.force.allowed", "true")
     sql("""drop table iud.zerorows""")

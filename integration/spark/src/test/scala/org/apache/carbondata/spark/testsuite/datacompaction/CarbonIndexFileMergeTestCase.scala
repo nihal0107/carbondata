@@ -455,6 +455,9 @@ class CarbonIndexFileMergeTestCase
         | TBLPROPERTIES('SORT_COLUMNS'='city,name', 'streaming'='true')
       """.stripMargin)
     sql(s"LOAD DATA LOCAL INPATH '$file2' INTO TABLE streamingTable OPTIONS('header'='false')")
+    sql("select count(*) from streamingTable where age=30").show()
+    sql("update streamingTable set (age)=(30) where city='c0'").show()
+    sql("select count(*) from streamingTable where age=30").show()
     // check for one merge index file
     assert(
       CarbonTestUtil.getIndexFileCount("default_streamingTable",

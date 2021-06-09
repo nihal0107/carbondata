@@ -267,7 +267,7 @@ class TestStreamingTableOpName extends QueryTest with BeforeAndAfterAll {
     val thread = createFileStreamingThread(spark, carbonTable, csvDataDir, intervalSecond = 1,
       identifier)
     thread.start()
-    Thread.sleep(2000)
+    Thread.sleep(5000)
     generateCSVDataFile(spark, idStart = 30, rowNums = 10, csvDataDir)
     Thread.sleep(5000)
     thread.interrupt()
@@ -275,10 +275,26 @@ class TestStreamingTableOpName extends QueryTest with BeforeAndAfterAll {
       sql("select count(*) from streaming.stream_table_file"),
       Seq(Row(25))
     )
+    sql("select * from streaming.stream_table_file").show()
 
+    sql("select * from streaming.stream_table_file where name='name_35'").show()
+    sql("show segments on streaming.stream_table_file").show()
+//    sql(s"alter table streaming.stream_table_file compact 'streaming'")
+    sql("update streaming.stream_table_file set (name)=('name_35') where city='city_36'").show()
+    sql("select * from streaming.stream_table_file where name='name_35'").show()
     val row = sql("select * from streaming.stream_table_file order by id").head()
     val exceptedRow = Row(10, "name_10", "city_10", 100000.0, BigDecimal.valueOf(0.01), 80.01, Date.valueOf("1990-01-01"), Timestamp.valueOf("2010-01-01 10:01:01.0"), Timestamp.valueOf("2010-01-01 10:01:01.0"))
     assertResult(exceptedRow)(row)
+    val table1 =
+      CarbonEnv.getCarbonTable(Option("streaming"), "stream_table_file")(spark)
+    val thread2 = createFileStreamingThread(spark, carbonTable, csvDataDir, intervalSecond = 1,
+      identifier)
+    thread2.start()
+    Thread.sleep(5000)
+    generateCSVDataFile(spark, idStart = 30, rowNums = 10, csvDataDir)
+    Thread.sleep(5000)
+    thread2.interrupt()
+    sql("show segments on streaming.stream_table_file").show()
   }
 
   def loadData() {

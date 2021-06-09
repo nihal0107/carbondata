@@ -211,6 +211,8 @@ class MergeTestCase extends QueryTest with BeforeAndAfterAll {
 
   test("test basic merge update with all mappings") {
     sql("drop table if exists order")
+    sql(s"create table order(id string, name string, c_name string, quantity int, price int, " +
+        s"state int) stored as carbondata tblproperties('streaming'='true')")
     val (dwSelframe, odsframe) = initialize
 
     val updateMap = Map("id" -> "A.id",
@@ -224,6 +226,8 @@ class MergeTestCase extends QueryTest with BeforeAndAfterAll {
       col("A.state") =!= col("B.state")).updateExpr(updateMap).execute()
     assert(getDeleteDeltaFileCount("order", "0") == 1)
     checkAnswer(sql("select count(*) from order where state = 2"), Seq(Row(2)))
+    sql("select * from order where state = 2").show()
+    sql("show segments for table order").show()
   }
 
   test("test basic merge update with few mappings") {

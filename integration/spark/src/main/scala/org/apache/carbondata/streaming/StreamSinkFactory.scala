@@ -150,7 +150,7 @@ object StreamSinkFactory {
    * get current stream segment id
    * @return
    */
-  private def getStreamSegmentId(carbonTable: CarbonTable): String = {
+  def getStreamSegmentId(carbonTable: CarbonTable): String = {
     val segmentId = StreamSegment.open(carbonTable)
     val segmentDir = CarbonTablePath.getSegmentPath(carbonTable.getTablePath, segmentId)
     val metadataPath = CarbonTablePath.getMetadataPath(carbonTable.getTablePath)

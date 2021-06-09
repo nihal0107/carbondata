@@ -141,8 +141,11 @@ object DeleteExecution {
         deleteRdd.map { row =>
           val tupleId: String = row
             .getString(row.fieldIndex(CarbonCommonConstants.CARBON_IMPLICIT_COLUMN_TUPLEID))
-          val key = CarbonUpdateUtil.getSegmentWithBlockFromTID(tupleId,
-            carbonTable.isHivePartitionTable)
+          val key =
+            if (tupleId != null) {
+              CarbonUpdateUtil.getSegmentWithBlockFromTID(tupleId,
+                carbonTable.isHivePartitionTable)
+            } else null
           (key, row)
         }.groupByKey()
     }

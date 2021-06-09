@@ -17,33 +17,44 @@
 
 package org.apache.spark.sql.execution.command.mutation
 
+import java.util
+
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.execution.command._
-import org.apache.spark.sql.execution.command.management.CarbonInsertIntoWithDf
+import org.apache.spark.sql.execution.command.management.{CarbonInsertIntoWithDf, CommonLoadUtils}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.strategy.MixedFormatHandler
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{ArrayType, LongType}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.AlterTableUtil
-
 import org.apache.carbondata.common.exceptions.sql.MalformedCarbonCommandException
 import org.apache.carbondata.common.logging.LogServiceFactory
 import org.apache.carbondata.core.constants.CarbonCommonConstants
+import org.apache.carbondata.core.datastore.block.SegmentPropertiesAndSchemaHolder
+import org.apache.carbondata.core.datastore.impl.FileFactory
 import org.apache.carbondata.core.exception.ConcurrentOperationException
 import org.apache.carbondata.core.features.TableOperation
-import org.apache.carbondata.core.index.Segment
+import org.apache.carbondata.core.index.{IndexStoreManager, Segment}
 import org.apache.carbondata.core.locks.{CarbonLockFactory, CarbonLockUtil, LockUsage}
+import org.apache.carbondata.core.metadata.CarbonMetadata
 import org.apache.carbondata.core.mutate.CarbonUpdateUtil
 import org.apache.carbondata.core.statusmanager.{SegmentStatus, SegmentStatusManager}
 import org.apache.carbondata.core.util.CarbonProperties
+import org.apache.carbondata.core.util.path.CarbonTablePath
 import org.apache.carbondata.events.{OperationContext, OperationListenerBus, UpdateTablePostEvent, UpdateTablePreEvent}
 import org.apache.carbondata.processing.loading.FailureCauses
+import org.apache.carbondata.processing.loading.model.CarbonLoadModel
 import org.apache.carbondata.processing.util.CarbonLoaderUtil
+import org.apache.carbondata.spark.rdd.StreamHandoffRDD
 import org.apache.carbondata.spark.util.CarbonScalaUtil
+import org.apache.carbondata.streaming.StreamSinkFactory
+import org.apache.carbondata.streaming.segment.StreamSegment
 import org.apache.carbondata.view.MVManagerInSpark
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.util.SparkSQLUtil
 
 private[sql] case class CarbonProjectForUpdateCommand(
     plan: LogicalPlan,
@@ -161,6 +172,46 @@ private[sql] case class CarbonProjectForUpdateCommand(
                 "for the update key")
             }
           }
+          val segmentId = StreamSinkFactory.getStreamSegmentId(carbonTable)
+          val newSegmentId = StreamSegment.close(carbonTable, segmentId)
+          val newSegmentDir =
+            CarbonTablePath.getSegmentPath(carbonTable.getTablePath, newSegmentId)
+          FileFactory.mkdirs(newSegmentDir)
+          val (sizeInBytes, table, dbName, logicalPartitionRelation, finalPartition) =
+            CommonLoadUtils
+                .processMetadataCommon(
+                  sparkSession,
+                  databaseNameOp,
+                  tableName,
+                  None,
+                  Map.empty)
+          val hadoopConf = sparkSession.sessionState.newHadoopConf()
+          val factPath = ""
+          val header = getHeader(plan)
+          val optionsFinal: util.Map[String, String] =
+            CommonLoadUtils.getFinalLoadOptions(table, Map(("fileheader" -> header)))
+          val carbonLoadModel: CarbonLoadModel = CommonLoadUtils.prepareLoadModel(
+            hadoopConf,
+            factPath,
+            optionsFinal,
+            parentTablePath = null,
+            table = table,
+            isDataFrame = true,
+            internalOptions = Map.empty,
+            partition = finalPartition,
+            options = Map(("fileheader" -> header)))
+
+          StreamHandoffRDD.startStreamingHandoffThread(
+            carbonLoadModel,
+            operationContext,
+            sparkSession, false)
+          sparkSession.sessionState.catalog
+              .refreshTable(new TableIdentifier(tableName, Option(dbName)))
+          IndexStoreManager.getInstance().clearIndex(carbonTable.getAbsoluteTableIdentifier)
+          SegmentPropertiesAndSchemaHolder.getInstance()
+              .invalidate(carbonTable.getAbsoluteTableIdentifier)
+          CarbonMetadata.getInstance.removeTable(dbName, tableName)
+
 
           // do delete operation.
           val (segmentsToBeDeleted, updatedRowCountTemp) = DeleteExecution.deleteDeltaExecution(
@@ -281,6 +332,27 @@ private[sql] case class CarbonProjectForUpdateCommand(
     Seq(Row(updatedRowCount))
   }
 
+  def getHeader(plan: LogicalPlan): String = {
+    var header = ""
+    var found = false
+
+    plan match {
+      case Project(pList, _) if (!found) =>
+        found = true
+        header = pList
+            .filter(field => !field.name
+                .equalsIgnoreCase(CarbonCommonConstants.CARBON_IMPLICIT_COLUMN_TUPLEID))
+            .map(col => if (col.name.endsWith(CarbonCommonConstants.UPDATED_COL_EXTENSION)) {
+              col.name
+                  .substring(0, col.name.lastIndexOf(CarbonCommonConstants.UPDATED_COL_EXTENSION))
+            }
+            else {
+              col.name
+            }).mkString(",")
+    }
+    header
+  }
+
   private def performUpdate(
       dataFrame: Dataset[Row],
       databaseNameOp: Option[String],
@@ -310,27 +382,6 @@ private[sql] case class CarbonProjectForUpdateCommand(
       })
     }
 
-    def getHeader(relation: CarbonDatasourceHadoopRelation, plan: LogicalPlan): String = {
-      var header = ""
-      var found = false
-
-      plan match {
-        case Project(pList, _) if (!found) =>
-          found = true
-          header = pList
-            .filter(field => !field.name
-              .equalsIgnoreCase(CarbonCommonConstants.CARBON_IMPLICIT_COLUMN_TUPLEID))
-            .map(col => if (col.name.endsWith(CarbonCommonConstants.UPDATED_COL_EXTENSION)) {
-              col.name
-                .substring(0, col.name.lastIndexOf(CarbonCommonConstants.UPDATED_COL_EXTENSION))
-            }
-            else {
-              col.name
-            }).mkString(",")
-      }
-      header
-    }
-
     // check for the data type of the new value to be updated
     checkForUnsupportedDataType(dataFrame)
     val ex = dataFrame.queryExecution.analyzed
@@ -347,7 +398,7 @@ private[sql] case class CarbonProjectForUpdateCommand(
       case _ => sys.error("")
     }
 
-    val header = getHeader(carbonRelation, plan)
+    val header = getHeader(plan)
     val fields = dataFrame.schema.fields
     val otherFields = CarbonScalaUtil.getAllFieldsWithoutTupleIdField(fields)
     val dataFrameWithOutTupleId = dataFrame.select(otherFields: _*)

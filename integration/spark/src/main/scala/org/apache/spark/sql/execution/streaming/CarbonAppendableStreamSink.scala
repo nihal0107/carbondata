@@ -178,16 +178,16 @@ class CarbonAppendableStreamSink(
   /**
    * if the directory size of current segment beyond the threshold, hand off new segment
    */
-  private def checkOrHandOffSegment(): Unit = {
+  def checkOrHandOffSegment(currentSegmentIdNew: String = currentSegmentId): Unit = {
     // get streaming segment, if not exists, create new streaming segment
     val segmentId = StreamSegment.open(carbonTable)
-    if (segmentId.equals(currentSegmentId)) {
-      val segmentDir = CarbonTablePath.getSegmentPath(carbonTable.getTablePath, currentSegmentId)
+    if (segmentId.equals(currentSegmentIdNew)) {
+      val segmentDir = CarbonTablePath.getSegmentPath(carbonTable.getTablePath, currentSegmentIdNew)
       if (segmentMaxSize <= StreamSegment.size(segmentDir)) {
-        val newSegmentId = StreamSegment.close(carbonTable, currentSegmentId)
+        val newSegmentId = StreamSegment.close(carbonTable, currentSegmentIdNew)
         currentSegmentId = newSegmentId
         val newSegmentDir =
-          CarbonTablePath.getSegmentPath(carbonTable.getTablePath, currentSegmentId)
+          CarbonTablePath.getSegmentPath(carbonTable.getTablePath, currentSegmentIdNew)
         FileFactory.mkdirs(newSegmentDir)
 
         // trigger hand off operation
@@ -202,7 +202,7 @@ class CarbonAppendableStreamSink(
     } else {
       currentSegmentId = segmentId
       val newSegmentDir =
-        CarbonTablePath.getSegmentPath(carbonTable.getTablePath, currentSegmentId)
+        CarbonTablePath.getSegmentPath(carbonTable.getTablePath, currentSegmentIdNew)
       FileFactory.mkdirs(newSegmentDir)
     }
   }

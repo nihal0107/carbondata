@@ -25,8 +25,13 @@ import org.apache.spark.sql.execution.command.{AlterTableAddColumnsCommand, Alte
 import org.apache.spark.sql.execution.command.mutation.{CarbonProjectForDeleteCommand, CarbonProjectForUpdateCommand}
 import org.apache.spark.sql.execution.command.schema.{CarbonAlterTableAddColumnCommand, CarbonAlterTableColRenameDataTypeChangeCommand, CarbonAlterTableDropColumnCommand}
 import org.apache.spark.sql.util.SparkSQLUtil
-
 import org.apache.carbondata.common.exceptions.sql.MalformedCarbonCommandException
+import org.apache.carbondata.core.datastore.impl.FileFactory
+import org.apache.carbondata.core.util.path.CarbonTablePath
+import org.apache.carbondata.spark.rdd.StreamHandoffRDD
+import org.apache.carbondata.streaming.StreamSinkFactory
+import org.apache.carbondata.streaming.segment.StreamSegment
+import org.apache.spark.sql.execution.streaming.CarbonAppendableStreamSink
 
 /**
  * Strategy for streaming table, like blocking unsupported operation
@@ -101,8 +106,19 @@ private[sql] object StreamingTableStrategy extends SparkStrategy {
         streaming = false
     }
     if (streaming) {
-      throw new MalformedCarbonCommandException(
-        s"$operation is not allowed for streaming table")
+//      val carbonTable = CarbonEnv.getCarbonTable(
+//        tableIdentifier.database, tableIdentifier.table)(SparkSQLUtil.getSparkSession)
+//      val segmentId = StreamSinkFactory.getStreamSegmentId(carbonTable)
+//      val newSegmentId = StreamSegment.close(carbonTable, segmentId)
+//      val newSegmentDir =
+//        CarbonTablePath.getSegmentPath(carbonTable.getTablePath, newSegmentId)
+//      FileFactory.mkdirs(newSegmentDir)
+//      StreamHandoffRDD.startStreamingHandoffThread(
+//        carbonLoadModel,
+//        operationContext,
+//        SparkSQLUtil.getSparkSession, false)
+//      throw new MalformedCarbonCommandException(
+//        s"$operation is not allowed for streaming table")
     }
   }
 
